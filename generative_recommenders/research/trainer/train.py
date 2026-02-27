@@ -129,6 +129,8 @@ def train_fn(
     enable_tf32: bool = False,
     random_seed: int = 42,
 ) -> None:
+    _BASE_OUT = os.environ.get("OUTPUT_DIR", ".")
+
     # to enable more deterministic results.
     random.seed(random_seed)
     torch.backends.cuda.matmul.allow_tf32 = enable_tf32
@@ -283,9 +285,9 @@ def train_fn(
     if positional_sampling_ratio is not None and positional_sampling_ratio < 1:
         model_desc += f"-d{positional_sampling_ratio}"
     # creates subfolders.
-    os.makedirs(f"./exps/{model_subfolder}", exist_ok=True)
-    os.makedirs(f"./ckpts/{model_subfolder}", exist_ok=True)
-    log_dir = f"./exps/{model_desc}"
+    os.makedirs(f"{_BASE_OUT}/exps/{model_subfolder}", exist_ok=True)
+    os.makedirs(f"{_BASE_OUT}/ckpts/{model_subfolder}", exist_ok=True)
+    log_dir = f"{_BASE_OUT}/exps/{model_desc}"
     if rank == 0:
         writer = SummaryWriter(log_dir=log_dir)
         logging.info(f"Rank {rank}: writing logs to {log_dir}")
@@ -506,7 +508,7 @@ def train_fn(
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": opt.state_dict(),
                 },
-                f"./ckpts/{model_desc}_ep{epoch}",
+                f"{_BASE_OUT}/ckpts/{model_desc}_ep{epoch}",
             )
 
         logging.info(
@@ -526,7 +528,7 @@ def train_fn(
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": opt.state_dict(),
             },
-            f"./ckpts/{model_desc}_ep{epoch}",
+            f"{_BASE_OUT}/ckpts/{model_desc}_ep{epoch}",
         )
 
     cleanup()
