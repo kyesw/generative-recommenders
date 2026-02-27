@@ -6,8 +6,16 @@ SageMaker passes hyperparameters as a JSON file at:
 
 Supported hyperparameters:
   gin_config_file  : path to gin config (default: configs/ml-1m/hstu-sampled-softmax-n128-large-final.gin)
-  dataset_name     : dataset key understood by get_common_preprocessors() (default: ml-1m)
+  dataset_name     : dataset identifier (default: ml-1m)
   master_port      : DDP master port (default: 12345)
+
+Data loading (in priority order):
+  1. S3 input channel  — when launched with --data-s3-uri via launch_training.py,
+                         SageMaker downloads the data to SM_CHANNEL_TRAINING before
+                         this script runs. The CSV is symlinked into tmp/ so the
+                         rest of the pipeline finds it at the expected path.
+  2. Download at runtime — fallback when no input channel is provided.
+                           Downloads and preprocesses from the public URL.
 """
 
 import json
@@ -45,27 +53,43 @@ os.environ["OUTPUT_DIR"] = output_dir
 logger.info(f"OUTPUT_DIR set to: {output_dir}")
 
 # ---------------------------------------------------------------------------
-# 3. Create tmp/ for data downloads (relative to CWD = /opt/ml/code)
+# 3. Make training data available at tmp/{dataset_name}/sasrec_format.csv
+#    Priority: S3 input channel > download at runtime
 # ---------------------------------------------------------------------------
-os.makedirs("tmp", exist_ok=True)
+os.makedirs(f"tmp/{dataset_name}", exist_ok=True)
 
-# ---------------------------------------------------------------------------
-# 4. Download and preprocess data
-# ---------------------------------------------------------------------------
-logger.info(f"Preprocessing dataset: {dataset_name}")
-from generative_recommenders.research.data.preprocessor import get_common_preprocessors
+training_channel = os.environ.get("SM_CHANNEL_TRAINING", "")
+target_csv = f"tmp/{dataset_name}/sasrec_format.csv"
 
-preprocessors = get_common_preprocessors()
-if dataset_name not in preprocessors:
-    raise ValueError(
-        f"Unknown dataset '{dataset_name}'. "
-        f"Supported: {list(preprocessors.keys())}"
+if training_channel:
+    # --- Option 2: data was downloaded from S3 by SageMaker ---
+    source_csv = os.path.join(training_channel, "sasrec_format.csv")
+    if not os.path.isfile(source_csv):
+        raise FileNotFoundError(
+            f"Expected sasrec_format.csv in training channel at {source_csv}. "
+            f"Make sure prepare_data.py uploaded the file correctly."
+        )
+    if not os.path.exists(target_csv):
+        os.symlink(source_csv, target_csv)
+    logger.info(f"Using data from S3 input channel: {source_csv}")
+else:
+    # --- Option 1: download and preprocess at runtime ---
+    logger.info(f"No S3 input channel found. Downloading dataset: {dataset_name}")
+    from generative_recommenders.research.data.preprocessor import (
+        get_common_preprocessors,
     )
-preprocessors[dataset_name].preprocess_rating()
-logger.info("Data preprocessing complete.")
+
+    preprocessors = get_common_preprocessors()
+    if dataset_name not in preprocessors:
+        raise ValueError(
+            f"Unknown dataset '{dataset_name}'. "
+            f"Supported: {list(preprocessors.keys())}"
+        )
+    preprocessors[dataset_name].preprocess_rating()
+    logger.info("Data preprocessing complete.")
 
 # ---------------------------------------------------------------------------
-# 5. Delegate to main.main() with the correct flags
+# 4. Delegate to main.main() with the correct flags
 # ---------------------------------------------------------------------------
 sys.argv = [
     "train_research.py",

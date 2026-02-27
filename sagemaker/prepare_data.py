@@ -1,0 +1,167 @@
+"""
+One-time script to prepare training data and upload it to S3.
+
+Two modes:
+
+  sample   Download a public MovieLens dataset, preprocess it, and upload
+           the resulting sasrec_format.csv to S3.
+
+  custom   Upload your own pre-formatted CSV file directly to S3.
+           The file must have the sasrec_format columns:
+             user_id, sequence_item_ids, sequence_ratings, sequence_timestamps
+
+Usage — sample data:
+  python sagemaker/prepare_data.py sample \\
+      --bucket my-bucket \\
+      --dataset-name ml-1m
+
+Usage — custom data:
+  python sagemaker/prepare_data.py custom \\
+      --bucket my-bucket \\
+      --local-path /path/to/my_data.csv \\
+      --dataset-name my-dataset
+
+In both cases the script prints the S3 URI to pass to launch_training.py
+via --data-s3-uri.
+"""
+
+import argparse
+import logging
+import os
+import sys
+import tempfile
+
+import boto3
+
+logging.basicConfig(stream=sys.stdout, level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+S3_PREFIX = "generative-recommenders/data"
+
+
+def s3_uri(bucket: str, dataset_name: str) -> str:
+    return f"s3://{bucket}/{S3_PREFIX}/{dataset_name}/"
+
+
+def upload_file(local_path: str, bucket: str, dataset_name: str) -> str:
+    s3_key = f"{S3_PREFIX}/{dataset_name}/sasrec_format.csv"
+    logger.info(f"Uploading {local_path} -> s3://{bucket}/{s3_key}")
+    boto3.client("s3").upload_file(local_path, bucket, s3_key)
+    uri = s3_uri(bucket, dataset_name)
+    logger.info(f"Upload complete. S3 URI: {uri}")
+    return uri
+
+
+def prepare_sample(args: argparse.Namespace) -> None:
+    """Download and preprocess a public MovieLens dataset, then upload to S3."""
+    dataset_name: str = args.dataset_name
+
+    # Run preprocessing in a temp working directory so tmp/ stays isolated
+    original_cwd = os.getcwd()
+    work_dir = tempfile.mkdtemp(prefix="gr_prepare_")
+    os.chdir(work_dir)
+    os.makedirs("tmp", exist_ok=True)
+
+    try:
+        from generative_recommenders.research.data.preprocessor import (
+            get_common_preprocessors,
+        )
+
+        preprocessors = get_common_preprocessors()
+        if dataset_name not in preprocessors:
+            raise ValueError(
+                f"Unknown sample dataset '{dataset_name}'. "
+                f"Supported: {list(preprocessors.keys())}"
+            )
+
+        logger.info(f"Preprocessing {dataset_name} (this may take a few minutes)...")
+        preprocessors[dataset_name].preprocess_rating()
+
+        csv_path = f"tmp/{dataset_name}/sasrec_format.csv"
+        if not os.path.isfile(csv_path):
+            raise FileNotFoundError(
+                f"Expected preprocessed CSV at {csv_path} but it was not found."
+            )
+
+        uri = upload_file(csv_path, args.bucket, dataset_name)
+    finally:
+        os.chdir(original_cwd)
+
+    print(f"\nS3 URI (pass to --data-s3-uri):\n  {uri}")
+
+
+def prepare_custom(args: argparse.Namespace) -> None:
+    """Upload a user-provided sasrec_format CSV to S3."""
+    local_path: str = args.local_path
+    dataset_name: str = args.dataset_name
+
+    if not os.path.isfile(local_path):
+        raise FileNotFoundError(f"Local file not found: {local_path}")
+
+    uri = upload_file(local_path, args.bucket, dataset_name)
+    print(f"\nS3 URI (pass to --data-s3-uri):\n  {uri}")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Prepare and upload training data to S3."
+    )
+    parser.add_argument(
+        "--bucket",
+        required=True,
+        help="S3 bucket to upload data to.",
+    )
+    parser.add_argument(
+        "--region",
+        default=os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
+        help="AWS region.",
+    )
+
+    subparsers = parser.add_subparsers(dest="mode", required=True)
+
+    # --- sample mode ---
+    sample_parser = subparsers.add_parser(
+        "sample",
+        help="Download and preprocess a public MovieLens dataset.",
+    )
+    sample_parser.add_argument(
+        "--dataset-name",
+        default="ml-1m",
+        dest="dataset_name",
+        choices=["ml-1m", "ml-20m", "ml-1b", "amzn-books"],
+        help="Dataset to download and preprocess.",
+    )
+
+    # --- custom mode ---
+    custom_parser = subparsers.add_parser(
+        "custom",
+        help="Upload your own pre-formatted sasrec_format CSV.",
+    )
+    custom_parser.add_argument(
+        "--local-path",
+        required=True,
+        dest="local_path",
+        help="Local path to your sasrec_format CSV file.",
+    )
+    custom_parser.add_argument(
+        "--dataset-name",
+        required=True,
+        dest="dataset_name",
+        help="Name to identify this dataset (used as S3 key prefix and hyperparameter).",
+    )
+
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    boto3.setup_default_session(region_name=args.region)
+
+    if args.mode == "sample":
+        prepare_sample(args)
+    elif args.mode == "custom":
+        prepare_custom(args)
+
+
+if __name__ == "__main__":
+    main()

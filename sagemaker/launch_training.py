@@ -15,6 +15,17 @@ Usage:
       --region us-east-1 \\
       --dataset debug \\
       --mode train
+
+Providing pre-uploaded S3 data (recommended):
+  # First prepare the data once:
+  python sagemaker/prepare_data.py sample --bucket my-bucket --dataset-name ml-1m
+  python sagemaker/prepare_data.py custom --bucket my-bucket \\
+      --local-path /path/to/my_data.csv --dataset-name my-dataset
+
+  # Then pass the printed S3 URI to launch_training.py:
+  python sagemaker/launch_training.py --pipeline research \\
+      --role ... --bucket my-bucket \\
+      --data-s3-uri s3://my-bucket/generative-recommenders/data/ml-1m/
 """
 
 import argparse
@@ -87,6 +98,17 @@ def parse_args() -> argparse.Namespace:
         dest="master_port",
         help="(research) DDP master port.",
     )
+    # Data channel
+    parser.add_argument(
+        "--data-s3-uri",
+        default=None,
+        dest="data_s3_uri",
+        help=(
+            "S3 URI of the training data folder produced by prepare_data.py "
+            "(e.g. s3://my-bucket/generative-recommenders/data/ml-1m/). "
+            "If omitted, the training script downloads data at runtime."
+        ),
+    )
     # DLRM v3-specific flags
     parser.add_argument(
         "--dataset",
@@ -141,6 +163,7 @@ def main() -> None:
     logger.info(f"Instance type : {args.instance_type}")
     logger.info(f"Output path   : {output_path}")
     logger.info(f"Hyperparams   : {hyperparameters}")
+    logger.info(f"Data S3 URI   : {args.data_s3_uri or '(none — will download at runtime)'}")
 
     estimator = Estimator(
         image_uri=image_uri,
@@ -153,7 +176,8 @@ def main() -> None:
         region_name=args.region,
     )
 
-    estimator.fit()
+    inputs = {"training": args.data_s3_uri} if args.data_s3_uri else None
+    estimator.fit(inputs)
     logger.info("Training job submitted successfully.")
 
 
