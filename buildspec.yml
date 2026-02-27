@@ -1,0 +1,29 @@
+version: 0.2
+
+env:
+  variables:
+    IMAGE_NAME: "generative-recommenders"
+    IMAGE_TAG: "latest"
+  # Set AWS_ACCOUNT_ID and AWS_REGION as plain-text environment variables
+  # in the CodeBuild project configuration (not here, to avoid hardcoding).
+
+phases:
+  pre_build:
+    commands:
+      - echo "Logging in to Amazon ECR..."
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+      - echo "Creating ECR repository if it does not exist..."
+      - aws ecr describe-repositories --repository-names $IMAGE_NAME --region $AWS_REGION || aws ecr create-repository --repository-name $IMAGE_NAME --region $AWS_REGION
+      - ECR_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_NAME
+
+  build:
+    commands:
+      - echo "Building Docker image..."
+      - docker build -t $IMAGE_NAME:$IMAGE_TAG .
+
+  post_build:
+    commands:
+      - echo "Tagging and pushing image to ECR..."
+      - docker tag $IMAGE_NAME:$IMAGE_TAG $ECR_URI:$IMAGE_TAG
+      - docker push $ECR_URI:$IMAGE_TAG
+      - echo "Done. Image available at $ECR_URI:$IMAGE_TAG"
