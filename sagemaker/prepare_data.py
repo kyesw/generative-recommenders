@@ -48,12 +48,20 @@ def s3_uri(bucket: str, dataset_name: str) -> str:
     return f"s3://{bucket}/{S3_PREFIX}/{dataset_name}/"
 
 
-def upload_file(local_path: str, bucket: str, dataset_name: str) -> str:
-    s3_key = f"{S3_PREFIX}/{dataset_name}/sasrec_format.csv"
-    logger.info(f"Uploading {local_path} -> s3://{bucket}/{s3_key}")
-    boto3.client("s3").upload_file(local_path, bucket, s3_key)
+def upload_dir(local_dir: str, bucket: str, dataset_name: str) -> str:
+    """Upload every file under local_dir to S3, preserving relative paths."""
+    s3_client = boto3.client("s3")
+    uploaded = 0
+    for root, _, files in os.walk(local_dir):
+        for fname in files:
+            abs_path = os.path.join(root, fname)
+            rel_path = os.path.relpath(abs_path, local_dir)
+            s3_key = f"{S3_PREFIX}/{dataset_name}/{rel_path}"
+            logger.info(f"Uploading {abs_path} -> s3://{bucket}/{s3_key}")
+            s3_client.upload_file(abs_path, bucket, s3_key)
+            uploaded += 1
     uri = s3_uri(bucket, dataset_name)
-    logger.info(f"Upload complete. S3 URI: {uri}")
+    logger.info(f"Uploaded {uploaded} file(s). S3 URI: {uri}")
     return uri
 
 
@@ -80,13 +88,11 @@ def prepare_sample(args: argparse.Namespace) -> None:
         logger.info(f"Preprocessing {dataset_name} (this may take a few minutes)...")
         preprocessors[dataset_name].preprocess_rating()
 
-        csv_path = f"/tmp/{dataset_name}/sasrec_format.csv"
-        if not os.path.isfile(csv_path):
-            raise FileNotFoundError(
-                f"Expected preprocessed CSV at {csv_path} but it was not found."
-            )
+        if not os.path.isdir("/tmp"):
+            raise FileNotFoundError("Expected /tmp to contain preprocessed data.")
 
-        uri = upload_file(csv_path, args.bucket, dataset_name)
+        # Upload the full /tmp/ tree so the container can symlink it as tmp/
+        uri = upload_dir("/tmp", args.bucket, dataset_name)
     finally:
         os.chdir(original_cwd)
 

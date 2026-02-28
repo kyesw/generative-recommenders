@@ -58,28 +58,26 @@ if __name__ == "__main__":
     logger.info(f"OUTPUT_DIR set to: {output_dir}")
 
     # -----------------------------------------------------------------------
-    # 3. Make training data available at tmp/{dataset_name}/sasrec_format.csv
+    # 3. Make training data available under tmp/
     #    Priority: S3 input channel > download at runtime
+    #
+    #    prepare_data.py uploads the full /tmp/ tree to S3, preserving paths:
+    #      s3://.../ml-1m/ml-1m/sasrec_format.csv
+    #      s3://.../ml-1m/processed/ml-1m/movies.csv  ...
+    #    SageMaker downloads that to SM_CHANNEL_TRAINING, so we symlink
+    #    tmp/ -> SM_CHANNEL_TRAINING and the code finds all files as expected.
     # -----------------------------------------------------------------------
-    os.makedirs(f"tmp/{dataset_name}", exist_ok=True)
-
     training_channel = os.environ.get("SM_CHANNEL_TRAINING", "")
-    target_csv = f"tmp/{dataset_name}/sasrec_format.csv"
 
     if training_channel:
-        # --- Option 2: data was downloaded from S3 by SageMaker ---
-        source_csv = os.path.join(training_channel, "sasrec_format.csv")
-        if not os.path.isfile(source_csv):
-            raise FileNotFoundError(
-                f"Expected sasrec_format.csv in training channel at {source_csv}. "
-                f"Make sure prepare_data.py uploaded the file correctly."
-            )
-        if not os.path.exists(target_csv):
-            os.symlink(source_csv, target_csv)
-        logger.info(f"Using data from S3 input channel: {source_csv}")
+        # --- Option 2: full tmp/ tree was downloaded from S3 by SageMaker ---
+        if not os.path.exists("tmp"):
+            os.symlink(training_channel, "tmp")
+        logger.info(f"Using data from S3 input channel: {training_channel}")
     else:
         # --- Option 1: download and preprocess at runtime ---
         logger.info(f"No S3 input channel found. Downloading dataset: {dataset_name}")
+        os.makedirs(f"tmp/{dataset_name}", exist_ok=True)
         from generative_recommenders.research.data.preprocessor import (
             get_common_preprocessors,
         )

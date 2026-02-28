@@ -32,6 +32,8 @@ IMAGE_NAME="${IMAGE_NAME:-generative-recommenders}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 NO_WAIT="${1:-}"
 
+GITHUB_REPO_URL="https://github.com/kyesw/generative-recommenders.git"
+
 : "${GITHUB_REPO_URL:?GITHUB_REPO_URL env var is required}"
 
 # ---------------------------------------------------------------------------
