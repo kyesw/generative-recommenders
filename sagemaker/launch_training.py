@@ -69,7 +69,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--instance-type",
-        default="ml.p3.2xlarge",
+        default="ml.g4dn.xlarge",
         dest="instance_type",
         help="SageMaker instance type.",
     )
