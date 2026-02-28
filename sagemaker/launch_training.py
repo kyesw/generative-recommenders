@@ -145,14 +145,14 @@ def main() -> None:
     output_path = f"s3://{args.bucket}/generative-recommenders/output/"
 
     if args.pipeline == "research":
-        entry_point_script = "sagemaker/train_research.py"
+        entry_point_script = "train_research.py"
         hyperparameters = {
             "gin_config_file": args.gin_config_file,
             "dataset_name": args.dataset_name,
             "master_port": args.master_port,
         }
     else:
-        entry_point_script = "sagemaker/train_dlrm_v3.py"
+        entry_point_script = "train_dlrm_v3.py"
         hyperparameters = {
             "dataset": args.dataset,
             "mode": args.mode,

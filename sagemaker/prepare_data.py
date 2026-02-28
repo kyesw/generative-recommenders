@@ -29,7 +29,12 @@ import argparse
 import logging
 import os
 import sys
-import tempfile
+
+# Add the repo root to sys.path so generative_recommenders is importable
+# without requiring a full `pip install -e .` (which needs fbgemm_gpu/torchrec).
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
 
 import boto3
 
@@ -56,11 +61,9 @@ def prepare_sample(args: argparse.Namespace) -> None:
     """Download and preprocess a public MovieLens dataset, then upload to S3."""
     dataset_name: str = args.dataset_name
 
-    # Run preprocessing in a temp working directory so tmp/ stays isolated
+    # chdir to / so the preprocessor's relative "tmp/" paths resolve to /tmp/
     original_cwd = os.getcwd()
-    work_dir = tempfile.mkdtemp(prefix="gr_prepare_")
-    os.chdir(work_dir)
-    os.makedirs("tmp", exist_ok=True)
+    os.chdir("/")
 
     try:
         from generative_recommenders.research.data.preprocessor import (
@@ -77,7 +80,7 @@ def prepare_sample(args: argparse.Namespace) -> None:
         logger.info(f"Preprocessing {dataset_name} (this may take a few minutes)...")
         preprocessors[dataset_name].preprocess_rating()
 
-        csv_path = f"tmp/{dataset_name}/sasrec_format.csv"
+        csv_path = f"/tmp/{dataset_name}/sasrec_format.csv"
         if not os.path.isfile(csv_path):
             raise FileNotFoundError(
                 f"Expected preprocessed CSV at {csv_path} but it was not found."
@@ -106,23 +109,22 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Prepare and upload training data to S3."
     )
-    parser.add_argument(
-        "--bucket",
-        required=True,
-        help="S3 bucket to upload data to.",
-    )
-    parser.add_argument(
-        "--region",
-        default=os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
-        help="AWS region.",
-    )
-
     subparsers = parser.add_subparsers(dest="mode", required=True)
 
     # --- sample mode ---
     sample_parser = subparsers.add_parser(
         "sample",
         help="Download and preprocess a public MovieLens dataset.",
+    )
+    sample_parser.add_argument(
+        "--bucket",
+        required=True,
+        help="S3 bucket to upload data to.",
+    )
+    sample_parser.add_argument(
+        "--region",
+        default=os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
+        help="AWS region.",
     )
     sample_parser.add_argument(
         "--dataset-name",
@@ -136,6 +138,16 @@ def parse_args() -> argparse.Namespace:
     custom_parser = subparsers.add_parser(
         "custom",
         help="Upload your own pre-formatted sasrec_format CSV.",
+    )
+    custom_parser.add_argument(
+        "--bucket",
+        required=True,
+        help="S3 bucket to upload data to.",
+    )
+    custom_parser.add_argument(
+        "--region",
+        default=os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
+        help="AWS region.",
     )
     custom_parser.add_argument(
         "--local-path",

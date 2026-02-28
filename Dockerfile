@@ -32,4 +32,4 @@ RUN pip install --no-cache-dir -e .
 
 ENV PYTHONPATH=/opt/ml/code
 # Default entry point; overridable via SAGEMAKER_PROGRAM env var
-ENV SAGEMAKER_PROGRAM=sagemaker/train_research.py
+ENV SAGEMAKER_PROGRAM=train_research.py
