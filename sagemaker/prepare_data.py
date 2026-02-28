@@ -48,21 +48,19 @@ def s3_uri(bucket: str, dataset_name: str) -> str:
     return f"s3://{bucket}/{S3_PREFIX}/{dataset_name}/"
 
 
-def upload_dir(local_dir: str, bucket: str, dataset_name: str) -> str:
-    """Upload every file under local_dir to S3, preserving relative paths."""
+def upload_dir(local_dir: str, bucket: str, s3_prefix: str) -> int:
+    """Upload every file under local_dir to S3 under s3_prefix, preserving relative paths."""
     s3_client = boto3.client("s3")
     uploaded = 0
     for root, _, files in os.walk(local_dir):
         for fname in files:
             abs_path = os.path.join(root, fname)
             rel_path = os.path.relpath(abs_path, local_dir)
-            s3_key = f"{S3_PREFIX}/{dataset_name}/{rel_path}"
-            logger.info(f"Uploading {abs_path} -> s3://{bucket}/{s3_key}")
+            s3_key = f"{s3_prefix}/{rel_path}"
+            logger.info(f"  {abs_path} -> s3://{bucket}/{s3_key}")
             s3_client.upload_file(abs_path, bucket, s3_key)
             uploaded += 1
-    uri = s3_uri(bucket, dataset_name)
-    logger.info(f"Uploaded {uploaded} file(s). S3 URI: {uri}")
-    return uri
+    return uploaded
 
 
 def prepare_sample(args: argparse.Namespace) -> None:
@@ -88,14 +86,27 @@ def prepare_sample(args: argparse.Namespace) -> None:
         logger.info(f"Preprocessing {dataset_name} (this may take a few minutes)...")
         preprocessors[dataset_name].preprocess_rating()
 
-        if not os.path.isdir("/tmp"):
-            raise FileNotFoundError("Expected /tmp to contain preprocessed data.")
+        # Upload only the two directories the training code reads:
+        #   /tmp/{dataset_name}/          -> s3://.../ml-1m/{dataset_name}/
+        #   /tmp/processed/{dataset_name}/ -> s3://.../ml-1m/processed/{dataset_name}/
+        base_prefix = f"{S3_PREFIX}/{dataset_name}"
+        total = 0
 
-        # Upload the full /tmp/ tree so the container can symlink it as tmp/
-        uri = upload_dir("/tmp", args.bucket, dataset_name)
+        data_dir = f"/tmp/{dataset_name}"
+        if os.path.isdir(data_dir):
+            logger.info(f"Uploading {data_dir}/")
+            total += upload_dir(data_dir, args.bucket, f"{base_prefix}/{dataset_name}")
+
+        processed_dir = f"/tmp/processed/{dataset_name}"
+        if os.path.isdir(processed_dir):
+            logger.info(f"Uploading {processed_dir}/")
+            total += upload_dir(processed_dir, args.bucket, f"{base_prefix}/processed/{dataset_name}")
+
+        logger.info(f"Uploaded {total} file(s) total.")
     finally:
         os.chdir(original_cwd)
 
+    uri = s3_uri(args.bucket, dataset_name)
     print(f"\nS3 URI (pass to --data-s3-uri):\n  {uri}")
 
 
