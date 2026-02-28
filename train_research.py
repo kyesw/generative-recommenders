@@ -71,9 +71,18 @@ if __name__ == "__main__":
 
     if training_channel:
         # --- Option 2: full tmp/ tree was downloaded from S3 by SageMaker ---
-        if not os.path.exists("tmp"):
-            os.symlink(training_channel, "tmp")
-        logger.info(f"Using data from S3 input channel: {training_channel}")
+        logger.info(f"SM_CHANNEL_TRAINING contents ({training_channel}):")
+        for root, dirs, files in os.walk(training_channel):
+            for f in files:
+                logger.info(f"  {os.path.join(root, f)}")
+
+        if os.path.islink("tmp"):
+            os.unlink("tmp")
+        elif os.path.isdir("tmp"):
+            import shutil
+            shutil.rmtree("tmp")
+        os.symlink(training_channel, "tmp")
+        logger.info(f"Symlinked tmp/ -> {training_channel}")
     else:
         # --- Option 1: download and preprocess at runtime ---
         logger.info(f"No S3 input channel found. Downloading dataset: {dataset_name}")
