@@ -1,11 +1,11 @@
-# Dockerfile_new
+# Dockerfile
 # SageMaker-compatible image for both training jobs and real-time inference endpoints.
 #
 # Training:   SageMaker runs `docker run <image> train`
 #             → sagemaker-training-toolkit reads SAGEMAKER_PROGRAM and executes it.
 #
 # Inference:  SageMaker runs `docker run <image> serve`
-#             → sagemaker-inference-toolkit starts nginx (port 8080) + gunicorn,
+#             → gunicorn serves docker/sagemaker_handler.py (Flask) on port 8080,
 #               routing GET /ping (health check) and POST /invocations (predict).
 #
 # Integrations:
@@ -29,7 +29,6 @@ FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
 #   wget             — optional dataset download fallback in train_research.py
 #   curl             — used by the HEALTHCHECK below and general debugging
 #   libgomp1         — OpenMP runtime required by fbgemm-gpu / torchrec
-#   nginx            — reverse proxy managed by sagemaker-inference-toolkit
 #   ca-certificates  — TLS root certs for HTTPS calls to AWS service endpoints
 # ---------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -38,9 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         wget \
         curl \
         libgomp1 \
-        nginx \
         ca-certificates \
-        openjdk-17-jre-headless \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
@@ -58,27 +55,20 @@ RUN pip install --no-cache-dir \
 # ---------------------------------------------------------------------------
 # SageMaker toolkits + AWS SDKs
 #
-#   sagemaker-training  — provides the `train` CLI entry point; reads the
-#                         SAGEMAKER_PROGRAM env var and executes the script
-#                         under /opt/ml/code/ with SM_* env vars injected.
+#   sagemaker-training — provides the `train` CLI entry point; reads the
+#                        SAGEMAKER_PROGRAM env var and executes the script
+#                        under /opt/ml/code/ with SM_* env vars injected.
 #
-#   sagemaker-inference — provides the `serve` CLI entry point; manages the
-#                         nginx + gunicorn stack and routes /ping and
-#                         /invocations to model_fn / predict_fn / output_fn.
+#   sagemaker (SDK)    — Python SDK required for the Feature Store high-level
+#                        API (sagemaker.feature_store.feature_group.FeatureGroup)
+#                        used by feature_store_setup.py and ingest_features.py.
+#                        Also resolves SageMaker MLflow tracking server credentials.
 #
-#   sagemaker (SDK)     — Python SDK required for the Feature Store high-level
-#                         API (sagemaker.feature_store.feature_group.FeatureGroup)
-#                         used by feature_store_setup.py and ingest_features.py.
-#                         Also resolves SageMaker MLflow tracking server credentials.
-#
-#   boto3               — direct AWS API calls: sagemaker-featurestore-runtime
-#                         (online store reads in inference.py), S3, STS, etc.
+#   boto3              — direct AWS API calls: sagemaker-featurestore-runtime
+#                        (online store reads in inference.py), S3, STS, etc.
 # ---------------------------------------------------------------------------
 RUN pip install --no-cache-dir \
         sagemaker-training \
-        sagemaker-pytorch-inference \
-        torchserve \
-        torch-model-archiver \
         "sagemaker>=2.200.0" \
         boto3
 
@@ -115,9 +105,9 @@ RUN pip install --no-cache-dir \
         gevent
 
 # ---------------------------------------------------------------------------
-# Install the generative-recommenders package (compiles CUDA extensions)
-# WORKDIR /opt/ml/code is the standard SageMaker code directory; the training
-# toolkit appends it to PYTHONPATH automatically and source_dir uploads land here.
+# Install the generative-recommenders package (compiles CUDA extensions).
+# WORKDIR /opt/ml/code is the standard SageMaker code directory; source_dir
+# uploads from launch_training.py / deploy_endpoint.py land here at runtime.
 # ---------------------------------------------------------------------------
 WORKDIR /opt/ml/code
 COPY setup.py requirements.txt README.md ./
@@ -125,55 +115,47 @@ COPY generative_recommenders generative_recommenders/
 RUN pip install --no-cache-dir -e .
 
 # ---------------------------------------------------------------------------
-# Entrypoint script
-#   train  → exec train    delegates to sagemaker-training-toolkit
-#   serve  → exec serve    delegates to sagemaker-inference-toolkit
-#   *      → pass-through  for local development / custom commands
-#
-# Using exec ensures the child process (train/serve) receives OS signals
-# (SIGTERM / SIGKILL) directly — required by SageMaker's graceful shutdown
-# protocol (SIGTERM followed by SIGKILL after 120 seconds during training).
+# Inference handler (Flask + gunicorn).
+# Placed outside /opt/ml/code so runtime source_dir uploads never overwrite it.
+# sagemaker_handler.py loads SAGEMAKER_PROGRAM at startup, calls model_fn once,
+# then serves /ping and /invocations without any TorchServe dependency.
 # ---------------------------------------------------------------------------
-RUN printf '%s\n' \
-        '#!/bin/bash' \
-        'set -e' \
-        'case "$1" in' \
-        '    train) exec train ;;' \
-        '    serve) exec serve ;;' \
-        '    *)     exec "$@" ;;' \
-        'esac' \
-    > /usr/local/bin/entrypoint.sh \
-    && chmod +x /usr/local/bin/entrypoint.sh
+COPY docker/sagemaker_handler.py /opt/program/sagemaker_handler.py
+
+# ---------------------------------------------------------------------------
+# Entrypoint script
+#   train  → exec train         delegates to sagemaker-training-toolkit
+#   serve  → gunicorn           custom Flask handler on port 8080
+#   *      → pass-through       for local development / custom commands
+#
+# --preload runs model_fn in the gunicorn master before forking workers so
+# model weights are loaded once and shared via copy-on-write.
+# exec replaces the shell so gunicorn receives SIGTERM directly.
+# ---------------------------------------------------------------------------
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # ---------------------------------------------------------------------------
 # Environment variables
 # ---------------------------------------------------------------------------
 
-# Default training entry point; overridden at job launch time when running
-# train_dlrm_v3.py (the Estimator passes source_dir + entry_point instead).
+# Default training entry point; overridden at job launch time via entry_point.
 ENV SAGEMAKER_PROGRAM=train_research.py
 
-# Make /opt/ml/code importable at both training (source_dir upload) and
-# inference (model_dir layout). sagemaker-training-toolkit also sets this,
-# but explicit declaration ensures it is set for `serve` containers too.
+# /opt/ml/code is on PYTHONPATH so inference.py can import generative_recommenders
+# whether the module was loaded from the baked-in package or a source_dir upload.
 ENV PYTHONPATH=/opt/ml/code
 
 # Forward log level to the SageMaker toolkit loggers (20 = logging.INFO).
-# Increase to 10 (DEBUG) for verbose toolkit diagnostics.
 ENV SAGEMAKER_CONTAINER_LOG_LEVEL=20
 
 # ---------------------------------------------------------------------------
-# Port — sagemaker-inference-toolkit starts nginx on 8080.
-# SageMaker only routes traffic to this port for real-time endpoints.
+# Port 8080 — gunicorn binds here; SageMaker routes inference traffic to it.
 # ---------------------------------------------------------------------------
 EXPOSE 8080
 
 # ---------------------------------------------------------------------------
-# Health check (used by Docker and local testing; SageMaker polls /ping directly)
-#   start-period  — allow up to 120 s for model loading before the first check
-#   interval      — re-check every 30 s
-#   timeout       — fail a check if no response within 10 s
-#   retries       — mark unhealthy after 3 consecutive failures
+# Health check (local Docker / CI; SageMaker polls /ping directly via HTTP)
 # ---------------------------------------------------------------------------
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
     CMD curl -sf http://localhost:8080/ping || exit 1
