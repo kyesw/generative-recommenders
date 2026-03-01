@@ -189,7 +189,7 @@ def main() -> None:
     logger.info(f"Data S3 URI   : {args.data_s3_uri or '(none — will download at runtime)'}")
     logger.info(f"MLflow URI    : {args.mlflow_tracking_uri or '(disabled)'}")
 
-    environment = {"SAGEMAKER_PROGRAM": entry_point_script}
+    environment = {}
     if args.mlflow_tracking_uri:
         environment["MLFLOW_TRACKING_URI"] = args.mlflow_tracking_uri
         environment["MLFLOW_EXPERIMENT_NAME"] = args.mlflow_experiment_name

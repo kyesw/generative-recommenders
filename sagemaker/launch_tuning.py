@@ -254,7 +254,7 @@ def main() -> None:
         logger.info(f"  - {param}: {config}")
     logger.info("=" * 80)
 
-    environment = {"SAGEMAKER_PROGRAM": entry_point_script}
+    environment = {}
     if args.mlflow_tracking_uri:
         environment["MLFLOW_TRACKING_URI"] = args.mlflow_tracking_uri
         environment["MLFLOW_EXPERIMENT_NAME"] = args.mlflow_experiment_name
