@@ -70,8 +70,11 @@ RUN pip install --no-cache-dir \
 RUN pip install --no-cache-dir \
         sagemaker-training \
         "sagemaker>=2.200.0" \
-        boto3 \
-        "urllib3<2"
+        boto3
+
+# Pin urllib3 to 1.x — urllib3>=2 causes infinite SSL recursion in Python 3.11.
+# This must run AFTER all other installs so nothing pulls it back up.
+RUN pip install --no-cache-dir "urllib3>=1.26,<2"
 
 # ---------------------------------------------------------------------------
 # MLflow experiment tracking
