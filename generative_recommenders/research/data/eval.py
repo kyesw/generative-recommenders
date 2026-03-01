@@ -29,7 +29,10 @@ from generative_recommenders.research.modeling.sequential.features import (
     SequentialFeatures,
 )
 from generative_recommenders.research.rails.similarities.module import SimilarityModule
-from torch.utils.tensorboard import SummaryWriter
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except ImportError:
+    SummaryWriter = None
 
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
@@ -51,7 +54,7 @@ def get_eval_state(
     float_dtype: Optional[torch.dtype] = None,
 ) -> EvalState:
     # Exhaustively eval all items (incl. seen ids).
-    eval_negatives_ids = torch.as_tensor(all_item_ids).to(device).unsqueeze(0)  # [1, X]
+    eval_negatives_ids = torch.as_tensor(all_item_ids, dtype=torch.long).to(device).unsqueeze(0)  # [1, X]
     # pyre-fixme[29]: `Union[Tensor, Module]` is not a function.
     eval_negative_embeddings = negatives_sampler.normalize_embeddings(
         # pyre-fixme[29]: `Union[Tensor, Module]` is not a function.
