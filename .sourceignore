@@ -1,0 +1,48 @@
+# .sourceignore — controls what the SageMaker SDK tarballs when uploading
+# source_dir to S3. Syntax is identical to .gitignore.
+# Only what the training/inference container needs is kept.
+
+# ── Git & IDE ──────────────────────────────────────────────────────────────
+.git/
+.gitmodules
+.gitignore
+.idea/
+.claude/
+
+# ── Docker & CI (not needed inside the container) ──────────────────────────
+Dockerfile
+Dockerfile_bk
+.dockerignore
+buildspec.yml
+
+# ── SageMaker launch scripts (run locally, not in the container) ───────────
+sagemaker/
+
+# ── Docs & community files (not needed for training/inference) ─────────────
+CODE_OF_CONDUCT.md
+CONTRIBUTING.md
+LICENSE
+
+# ── Local data & temp files ────────────────────────────────────────────────
+tmp/
+*.tar.gz
+*.zip
+
+# ── Python bytecode & build artifacts ─────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg-info
+dist/
+build/
+
+# ── Compiled CUDA / C++ extensions (.so built inside the Docker image) ─────
+*.so
+*.o
+*.a
+generative_recommenders/ops/cpp/build/
+
+# ── Third-party MLPerf loadgen (not used at training/inference time) ───────
+generative_recommenders/dlrm_v3/inference/thirdparty/

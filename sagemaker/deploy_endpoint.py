@@ -35,11 +35,13 @@ import argparse
 import logging
 import sys
 import time
-
+import os
 import boto3
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def parse_args() -> argparse.Namespace:
@@ -157,7 +159,6 @@ def main() -> None:
     feature_store_region = args.feature_store_region or args.region
 
     env = {
-        "SAGEMAKER_PROGRAM": "inference.py",
         "GIN_CONFIG_FILE": args.gin_config_file,
         "DATASET_NAME": args.dataset_name,
         "FEATURE_STORE_REGION": feature_store_region,
@@ -169,12 +170,15 @@ def main() -> None:
     logger.info(f"Model data    : {model_data}")
     logger.info(f"Endpoint name : {endpoint_name}")
     logger.info(f"Instance type : {args.instance_type}")
+    logger.info(f"Source dir    : {_REPO_ROOT}")
     logger.info(f"Environment   : {env}")
 
     model = Model(
         image_uri=image_uri,
         model_data=model_data,
         role=args.role,
+        entry_point="inference.py",
+        source_dir=_REPO_ROOT,
         env=env,
         sagemaker_session=sm_session,
     )

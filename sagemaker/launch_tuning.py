@@ -24,6 +24,8 @@ import sys
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # ============================================================================
 # TUNING CONFIGURATION - EDIT THIS SECTION
 # ============================================================================
@@ -270,7 +272,7 @@ def main() -> None:
         output_path=output_path,
         metric_definitions=METRIC_DEFINITIONS,
         region_name=args.region,
-        source_dir=".",
+        source_dir=_REPO_ROOT,
         entry_point=entry_point_script,
     )
 

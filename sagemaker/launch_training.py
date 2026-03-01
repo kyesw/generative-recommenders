@@ -43,6 +43,11 @@ import sys
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Repo root is one level above this file (sagemaker/launch_training.py → repo root).
+# Using an absolute path ensures source_dir is correct regardless of the
+# working directory from which this script is invoked.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -203,7 +208,7 @@ def main() -> None:
         environment=environment,
         output_path=output_path,
         region_name=args.region,
-        source_dir=".",
+        source_dir=_REPO_ROOT,
         entry_point=entry_point_script,
     )
 
