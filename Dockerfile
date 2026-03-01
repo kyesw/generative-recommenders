@@ -117,7 +117,7 @@ RUN pip install --no-cache-dir \
 # toolkit appends it to PYTHONPATH automatically and source_dir uploads land here.
 # ---------------------------------------------------------------------------
 WORKDIR /opt/ml/code
-COPY setup.py requirements.txt ./
+COPY setup.py requirements.txt README.md ./
 COPY generative_recommenders generative_recommenders/
 RUN pip install --no-cache-dir -e .
 
