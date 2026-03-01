@@ -1,8 +1,8 @@
 # Use official PyTorch 2.6.0 with CUDA 12.4 (matches requirements.txt)
 FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
 
-# Install SageMaker training toolkit (needed for SageMaker integration)
-RUN pip install --no-cache-dir sagemaker-training
+# Install SageMaker training and inference toolkits
+RUN pip install --no-cache-dir sagemaker-training sagemaker-inference
 
 # System dependencies
 RUN apt-get update && apt-get install -y \
@@ -39,7 +39,10 @@ COPY generative_recommenders generative_recommenders/
 RUN pip install --no-cache-dir -e .
 
 ENV PYTHONPATH=/opt/ml/code
-ENV SAGEMAKER_PROGRAM=train_research.py
+
+# Note: SAGEMAKER_PROGRAM will be set at runtime by SageMaker
+# Training: automatically set to entry_point script
+# Inference: set via environment or use inference.py as default
 
 # Note: Full code directory will be uploaded by SageMaker at runtime via source_dir
 # This image only needs dependencies + compiled CUDA extensions
