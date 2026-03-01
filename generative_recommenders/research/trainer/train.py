@@ -144,6 +144,10 @@ def train_fn(
         mlflow.set_tracking_uri(_mlflow_uri)
         mlflow.set_experiment(_mlflow_experiment)
         mlflow.start_run(run_name=f"{dataset_name}-{main_module}")
+        mlflow.set_tags({
+            "sagemaker.training_job_name": os.environ.get("TRAINING_JOB_NAME", "local"),
+            "sagemaker.tuning_job_name": os.environ.get("HYPERPARAMETER_TUNING_JOB_NAME", ""),
+        })
         mlflow.log_params({
             "dataset_name": dataset_name,
             "max_sequence_length": max_sequence_length,
@@ -160,6 +164,12 @@ def train_fn(
             "temperature": temperature,
             "item_embedding_dim": item_embedding_dim,
             "enable_tf32": enable_tf32,
+            # Architecture params needed by inference to reconstruct the model
+            "interaction_module_type": interaction_module_type,
+            "user_embedding_norm": user_embedding_norm,
+            "item_l2_norm": item_l2_norm,
+            "l2_norm_eps": l2_norm_eps,
+            "gr_output_length": gr_output_length,
         })
         logging.info(f"MLflow run started: experiment={_mlflow_experiment}, uri={_mlflow_uri}")
 

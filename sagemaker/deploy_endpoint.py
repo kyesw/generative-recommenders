@@ -1,27 +1,24 @@
 """
 Deploy a trained HSTU model as a SageMaker real-time inference endpoint.
 
+The inference container fetches all hyperparameters and the model checkpoint
+directly from MLflow, so no model-data S3 path is required.
+
 Usage:
   python sagemaker/deploy_endpoint.py \\
-      --model-data s3://my-bucket/generative-recommenders/output/<job>/output/model.tar.gz \\
       --role arn:aws:iam::ACCOUNT:role/SageMakerRole \\
-      --bucket my-bucket \\
-      --region ap-northeast-2
-
-  # Or look up the latest training job automatically:
-  python sagemaker/deploy_endpoint.py \\
-      --role arn:aws:iam::ACCOUNT:role/SageMakerRole \\
-      --bucket my-bucket \\
-      --region ap-northeast-2
+      --region ap-northeast-2 \\
+      --mlflow-tracking-uri https://<tracking-server-id>.sagemaker.ap-northeast-2.amazonaws.com \\
+      --mlflow-run-id <run-id>
 
 Optional flags:
-  --endpoint-name       Name for the endpoint (default: generative-recommenders-<timestamp>)
-  --instance-type       Instance type (default: ml.c5.xlarge; GPU not required for ml-1m)
-  --image-tag           ECR image tag (default: latest)
-  --dataset-name        Dataset name passed to inference script (default: ml-1m)
-  --gin-config-file     Gin config path relative to /opt/ml/code (default: ml-1m large)
+  --endpoint-name         Name for the endpoint (default: generative-recommenders-<timestamp>)
+  --instance-type         Instance type (default: ml.c5.xlarge)
+  --image-tag             ECR image tag (default: latest)
+  --account               AWS account ID (resolved via STS if omitted)
   --feature-store-region  AWS region for Feature Store (default: same as --region)
-  --mlflow-tracking-uri   Optional MLflow server URI for logging
+  --cache-size            Max users to cache (default: 10000)
+  --cache-ttl             Cache TTL in seconds (default: 300)
 
 Inference request format (POST to endpoint):
   {"user_id": 42, "top_k": 10}
@@ -47,22 +44,24 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Deploy HSTU model to a SageMaker real-time endpoint."
     )
-    parser.add_argument(
-        "--model-data",
-        default=None,
-        dest="model_data",
-        help=(
-            "S3 URI of model.tar.gz produced by a training job. "
-            "If omitted, the latest completed training job is used."
-        ),
-    )
     parser.add_argument("--role", required=True, help="IAM role ARN.")
-    parser.add_argument("--bucket", required=True, help="S3 bucket (for ECR account resolution).")
     parser.add_argument("--region", default="us-east-1")
     parser.add_argument(
         "--account",
         default=None,
         help="AWS account ID. Resolved via STS if not provided.",
+    )
+    parser.add_argument(
+        "--mlflow-tracking-uri",
+        required=True,
+        dest="mlflow_tracking_uri",
+        help="URI of the MLflow tracking server.",
+    )
+    parser.add_argument(
+        "--mlflow-run-id",
+        required=True,
+        dest="mlflow_run_id",
+        help="MLflow run ID to load hyperparameters and checkpoint from.",
     )
     parser.add_argument(
         "--endpoint-name",
@@ -76,12 +75,6 @@ def parse_args() -> argparse.Namespace:
         dest="instance_type",
     )
     parser.add_argument("--image-tag", default="latest", dest="image_tag")
-    parser.add_argument("--dataset-name", default="ml-1m", dest="dataset_name")
-    parser.add_argument(
-        "--gin-config-file",
-        default="configs/ml-1m/hstu-sampled-softmax-n128-large-final.gin",
-        dest="gin_config_file",
-    )
     parser.add_argument(
         "--feature-store-region",
         default=None,
@@ -111,29 +104,6 @@ def get_account_id(account: str | None, region: str) -> str:
     return boto3.client("sts", region_name=region).get_caller_identity()["Account"]
 
 
-def get_latest_model_data(bucket: str, region: str) -> str:
-    """Find the most recent model.tar.gz under the default output prefix."""
-    s3 = boto3.client("s3", region_name=region)
-    prefix = "generative-recommenders/output/"
-    paginator = s3.get_paginator("list_objects_v2")
-    pages = paginator.paginate(Bucket=bucket, Prefix=prefix)
-
-    candidates = []
-    for page in pages:
-        for obj in page.get("Contents", []):
-            if obj["Key"].endswith("model.tar.gz"):
-                candidates.append((obj["LastModified"], obj["Key"]))
-
-    if not candidates:
-        raise FileNotFoundError(
-            f"No model.tar.gz found under s3://{bucket}/{prefix}"
-        )
-    candidates.sort(reverse=True)
-    key = candidates[0][1]
-    uri = f"s3://{bucket}/{key}"
-    logger.info(f"Using latest model artifact: {uri}")
-    return uri
-
 
 def main() -> None:
     args = parse_args()
@@ -150,8 +120,6 @@ def main() -> None:
         f"generative-recommenders:{args.image_tag}"
     )
 
-    model_data = args.model_data or get_latest_model_data(args.bucket, args.region)
-
     endpoint_name = args.endpoint_name or (
         f"generative-recommenders-{int(time.time())}"
     )
@@ -159,22 +127,23 @@ def main() -> None:
 
     env = {
         "SAGEMAKER_PROGRAM": "inference.py",
-        "GIN_CONFIG_FILE": args.gin_config_file,
-        "DATASET_NAME": args.dataset_name,
+        "MLFLOW_TRACKING_URI": args.mlflow_tracking_uri,
+        "MLFLOW_RUN_ID": args.mlflow_run_id,
         "FEATURE_STORE_REGION": feature_store_region,
         "FEATURE_CACHE_SIZE": str(args.cache_size),
         "FEATURE_CACHE_TTL": str(args.cache_ttl),
     }
 
     logger.info(f"Image URI     : {image_uri}")
-    logger.info(f"Model data    : {model_data}")
+    logger.info(f"MLflow run ID : {args.mlflow_run_id}")
     logger.info(f"Endpoint name : {endpoint_name}")
     logger.info(f"Instance type : {args.instance_type}")
     logger.info(f"Environment   : {env}")
 
+    # model_data is None — the container downloads weights from MLflow directly.
     model = Model(
         image_uri=image_uri,
-        model_data=model_data,
+        model_data=None,
         role=args.role,
         env=env,
         sagemaker_session=sm_session,

@@ -15,8 +15,8 @@ Response (JSON):
   }
 
 Environment variables (set at deploy time):
-  GIN_CONFIG_FILE         path to gin config relative to /opt/ml/code/
-  DATASET_NAME            dataset identifier (e.g. ml-1m)
+  MLFLOW_TRACKING_URI     URI of the MLflow tracking server
+  MLFLOW_RUN_ID           MLflow run ID to load hyperparameters and checkpoint from
   FEATURE_STORE_REGION    AWS region of the Feature Store
   FEATURE_CACHE_SIZE      Max cached users (default: 10000)
   FEATURE_CACHE_TTL       Cache TTL in seconds (default: 300)
@@ -28,7 +28,6 @@ import logging
 import os
 import sys
 import time
-from functools import lru_cache
 
 import torch
 
@@ -40,8 +39,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def model_fn(model_dir: str) -> dict:
-    """Load model, pre-compute item embeddings, initialise Feature Store client."""
-    import gin
+    """Fetch hyperparameters and checkpoint from MLflow, build model."""
+    import mlflow
     from generative_recommenders.research.data.preprocessor import get_common_preprocessors
     from generative_recommenders.research.modeling.sequential.embedding_modules import (
         LocalEmbeddingModule,
@@ -61,45 +60,38 @@ def model_fn(model_dir: str) -> dict:
     )
 
     # -----------------------------------------------------------------------
-    # 1. Parse gin config
+    # 1. Fetch hyperparameters from MLflow run
     # -----------------------------------------------------------------------
-    gin_config_file = os.environ.get(
-        "GIN_CONFIG_FILE",
-        "configs/ml-1m/hstu-sampled-softmax-n128-large-final.gin",
-    )
-    # gin resolves relative paths via frame inspection (__file__ of the caller),
-    # which returns None when inference.py is loaded dynamically via importlib.
-    # Convert to an absolute path so gin can find the file unconditionally.
-    if not os.path.isabs(gin_config_file):
-        gin_config_file = os.path.join("/opt/ml/code", gin_config_file)
-    dataset_name = os.environ.get("DATASET_NAME", "ml-1m")
+    tracking_uri = os.environ["MLFLOW_TRACKING_URI"]
+    run_id = os.environ["MLFLOW_RUN_ID"]
     region = os.environ.get("FEATURE_STORE_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
 
-    gin.parse_config_file(gin_config_file)
-    logger.info(f"Gin config loaded: {gin_config_file}")
+    mlflow.set_tracking_uri(tracking_uri)
+    run = mlflow.get_run(run_id)
+    p = run.data.params
+    logger.info(f"Fetched params from MLflow run {run_id}: {p}")
 
-    # Read training hyperparameters from gin bindings.
-    max_sequence_length = gin.query_parameter("train_fn.max_sequence_length")
-    item_embedding_dim = gin.query_parameter("train_fn.item_embedding_dim")
-    main_module = gin.query_parameter("train_fn.main_module")
-    interaction_module_type = gin.query_parameter("train_fn.interaction_module_type")
-    user_embedding_norm = gin.query_parameter("train_fn.user_embedding_norm")
-    item_l2_norm = gin.query_parameter("train_fn.item_l2_norm")
-    l2_norm_eps = gin.query_parameter("train_fn.l2_norm_eps")
-    try:
-        gr_output_length = gin.query_parameter("train_fn.gr_output_length")
-    except ValueError:
-        gr_output_length = 10  # default
+    dataset_name            = p["dataset_name"]
+    max_sequence_length     = int(p["max_sequence_length"])
+    item_embedding_dim      = int(p["item_embedding_dim"])
+    main_module             = p["main_module"]
+    interaction_module_type = p["interaction_module_type"]
+    user_embedding_norm     = p["user_embedding_norm"]
+    item_l2_norm            = p["item_l2_norm"] == "True"
+    l2_norm_eps             = float(p["l2_norm_eps"])
+    gr_output_length        = int(p["gr_output_length"])
+
+    logger.info(f"Dataset: {dataset_name}, main_module: {main_module}")
 
     # -----------------------------------------------------------------------
     # 2. Resolve max_item_id from the dataset preprocessor
     # -----------------------------------------------------------------------
     dp = get_common_preprocessors()[dataset_name]
     max_item_id = dp.expected_max_item_id()
-    logger.info(f"Dataset: {dataset_name}, max_item_id: {max_item_id}")
+    logger.info(f"max_item_id: {max_item_id}")
 
     # -----------------------------------------------------------------------
-    # 3. Build model (gin configures HSTU sub-components automatically)
+    # 3. Build model architecture (gin no longer needed)
     # -----------------------------------------------------------------------
     embedding_module = LocalEmbeddingModule(
         num_items=max_item_id,
@@ -132,14 +124,19 @@ def model_fn(model_dir: str) -> dict:
     )
 
     # -----------------------------------------------------------------------
-    # 4. Load checkpoint weights
+    # 4. Download checkpoint from MLflow artifact store
     # -----------------------------------------------------------------------
+    local_dir = mlflow.artifacts.download_artifacts(
+        run_id=run_id, artifact_path="checkpoints"
+    )
     ckpt_files = [
-        f for f in glob.glob(os.path.join(model_dir, "ckpts", "**"), recursive=True)
+        f for f in glob.glob(os.path.join(local_dir, "**"), recursive=True)
         if os.path.isfile(f)
     ]
     if not ckpt_files:
-        raise FileNotFoundError(f"No checkpoint found under {model_dir}/ckpts/")
+        raise FileNotFoundError(
+            f"No checkpoint found in MLflow artifacts (run={run_id}, path=checkpoints)"
+        )
     latest_ckpt = max(ckpt_files, key=os.path.getmtime)
     logger.info(f"Loading checkpoint: {latest_ckpt}")
 
@@ -161,7 +158,6 @@ def model_fn(model_dir: str) -> dict:
     with torch.no_grad():
         all_item_ids = torch.arange(1, max_item_id + 1, dtype=torch.long, device=device)
         item_embeddings = model.get_item_embeddings(all_item_ids)  # (N, D)
-        # Apply the same L2 normalisation used during training eval.
         if item_l2_norm:
             item_embeddings = item_embeddings / torch.clamp(
                 torch.linalg.norm(item_embeddings, dim=-1, keepdim=True),
@@ -177,12 +173,9 @@ def model_fn(model_dir: str) -> dict:
     featurestore_client = boto3.client(
         "sagemaker-featurestore-runtime", region_name=region
     )
-    
+
     cache_size = int(os.environ.get("FEATURE_CACHE_SIZE", "10000"))
     cache_ttl = int(os.environ.get("FEATURE_CACHE_TTL", "300"))
-    
-    cache = {}
-    cache_stats = {"hits": 0, "misses": 0}
 
     return {
         "model": model,
@@ -194,10 +187,10 @@ def model_fn(model_dir: str) -> dict:
         "item_l2_norm": item_l2_norm,
         "l2_norm_eps": l2_norm_eps,
         "device": device,
-        "cache": cache,
+        "cache": {},
         "cache_ttl": cache_ttl,
         "cache_size": cache_size,
-        "cache_stats": cache_stats,
+        "cache_stats": {"hits": 0, "misses": 0},
     }
 
 
@@ -244,11 +237,11 @@ def predict_fn(data: dict, model_ctx: dict) -> dict:
     else:
         if user_id is None:
             raise ValueError("Request must provide 'user_id' or 'sequence'.")
-        
+
         # Check cache
         cache_key = user_id
         now = time.time()
-        
+
         if cache_key in cache:
             cached_data, cached_time = cache[cache_key]
             if now - cached_time < cache_ttl:
@@ -259,7 +252,7 @@ def predict_fn(data: dict, model_ctx: dict) -> dict:
                 cached_data = None
         else:
             cached_data = None
-        
+
         if cached_data is None:
             cache_stats["misses"] += 1
             response = featurestore_client.get_record(
@@ -275,14 +268,14 @@ def predict_fn(data: dict, model_ctx: dict) -> dict:
             sequence_timestamps = [
                 int(x) for x in features["sequence_timestamps"].split(",") if x
             ]
-            
+
             # Evict oldest if cache full
             if len(cache) >= cache_size:
                 oldest_key = min(cache.keys(), key=lambda k: cache[k][1])
                 del cache[oldest_key]
-            
+
             cache[cache_key] = ((sequence_item_ids, sequence_timestamps), now)
-        
+
         if cache_stats["hits"] + cache_stats["misses"] % 100 == 0:
             total = cache_stats["hits"] + cache_stats["misses"]
             hit_rate = cache_stats["hits"] / total if total > 0 else 0
