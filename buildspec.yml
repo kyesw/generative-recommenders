@@ -17,11 +17,13 @@ phases:
       - echo "Creating ECR repository if it does not exist..."
       - aws ecr describe-repositories --repository-names $IMAGE_NAME --region $AWS_REGION || aws ecr create-repository --repository-name $IMAGE_NAME --region $AWS_REGION
       - ECR_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_NAME
+      - echo "Pulling previous image for layer cache (skipped on first build)..."
+      - docker pull $ECR_URI:$IMAGE_TAG || true
 
   build:
     commands:
-      - echo "Building Docker image..."
-      - docker build -t $IMAGE_NAME:$IMAGE_TAG .
+      - echo "Building Docker image (reusing cached layers from $ECR_URI:$IMAGE_TAG)..."
+      - docker build --cache-from $ECR_URI:$IMAGE_TAG -t $IMAGE_NAME:$IMAGE_TAG .
 
   post_build:
     commands:

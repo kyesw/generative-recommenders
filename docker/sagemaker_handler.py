@@ -20,33 +20,11 @@ import importlib.util
 import logging
 import os
 import sys
-import tarfile
 
-import boto3
 from flask import Flask, Response, request
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Download and extract source code from S3 if SAGEMAKER_SUBMIT_DIRECTORY is
-# set. SageMaker sets this env var for custom inference containers but does
-# NOT automatically download the code — that is the toolkit's responsibility.
-# We replicate that step here so inference.py and configs/ are available at
-# /opt/ml/code/ before model_fn is called.
-# ---------------------------------------------------------------------------
-_submit_dir = os.environ.get("SAGEMAKER_SUBMIT_DIRECTORY", "")
-if _submit_dir.startswith("s3://"):
-    _s3_path = _submit_dir[len("s3://"):]
-    _bucket, _key = _s3_path.split("/", 1)
-    _tmp = "/tmp/sourcedir.tar.gz"
-    _code_dir = "/opt/ml/code"
-    logger.info(f"Downloading source code: s3://{_bucket}/{_key} → {_tmp}")
-    boto3.client("s3").download_file(_bucket, _key, _tmp)
-    os.makedirs(_code_dir, exist_ok=True)
-    with tarfile.open(_tmp) as _tar:
-        _tar.extractall(_code_dir)
-    logger.info(f"Source code extracted to {_code_dir}")
 
 # ---------------------------------------------------------------------------
 # Load the inference handler module at import time (before gunicorn forks).

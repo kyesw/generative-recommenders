@@ -110,7 +110,9 @@ RUN pip install --no-cache-dir \
 # uploads from launch_training.py / deploy_endpoint.py land here at runtime.
 # ---------------------------------------------------------------------------
 WORKDIR /opt/ml/code
-COPY setup.py requirements.txt README.md ./
+COPY requirements.txt README.md ./
+COPY *.py ./
+COPY configs configs/
 COPY generative_recommenders generative_recommenders/
 RUN pip install --no-cache-dir -e .
 

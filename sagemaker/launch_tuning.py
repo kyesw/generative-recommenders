@@ -24,7 +24,6 @@ import sys
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # ============================================================================
 # TUNING CONFIGURATION - EDIT THIS SECTION
@@ -256,7 +255,7 @@ def main() -> None:
         logger.info(f"  - {param}: {config}")
     logger.info("=" * 80)
 
-    environment = {}
+    environment = {"SAGEMAKER_PROGRAM": entry_point_script}
     if args.mlflow_tracking_uri:
         environment["MLFLOW_TRACKING_URI"] = args.mlflow_tracking_uri
         environment["MLFLOW_EXPERIMENT_NAME"] = args.mlflow_experiment_name
@@ -272,8 +271,6 @@ def main() -> None:
         output_path=output_path,
         metric_definitions=METRIC_DEFINITIONS,
         region_name=args.region,
-        source_dir=_REPO_ROOT,
-        entry_point=entry_point_script,
     )
 
     # Build hyperparameter ranges

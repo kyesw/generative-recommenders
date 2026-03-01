@@ -43,10 +43,6 @@ import sys
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Repo root is one level above this file (sagemaker/launch_training.py → repo root).
-# Using an absolute path ensures source_dir is correct regardless of the
-# working directory from which this script is invoked.
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def parse_args() -> argparse.Namespace:
@@ -194,7 +190,7 @@ def main() -> None:
     logger.info(f"Data S3 URI   : {args.data_s3_uri or '(none — will download at runtime)'}")
     logger.info(f"MLflow URI    : {args.mlflow_tracking_uri or '(disabled)'}")
 
-    environment = {}
+    environment = {"SAGEMAKER_PROGRAM": entry_point_script}
     if args.mlflow_tracking_uri:
         environment["MLFLOW_TRACKING_URI"] = args.mlflow_tracking_uri
         environment["MLFLOW_EXPERIMENT_NAME"] = args.mlflow_experiment_name
@@ -208,8 +204,6 @@ def main() -> None:
         environment=environment,
         output_path=output_path,
         region_name=args.region,
-        source_dir=_REPO_ROOT,
-        entry_point=entry_point_script,
     )
 
     inputs = {"training": args.data_s3_uri} if args.data_s3_uri else None
