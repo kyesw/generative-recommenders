@@ -72,9 +72,6 @@ RUN pip install --no-cache-dir \
         "sagemaker>=2.200.0" \
         boto3
 
-# Pin urllib3 to 1.x — urllib3>=2 causes infinite SSL recursion in Python 3.11.
-# This must run AFTER all other installs so nothing pulls it back up.
-RUN pip install --no-cache-dir "urllib3>=1.26,<2"
 
 # ---------------------------------------------------------------------------
 # MLflow experiment tracking
@@ -127,6 +124,18 @@ RUN pip install --no-cache-dir -e .
 # then serves /ping and /invocations without any TorchServe dependency.
 # ---------------------------------------------------------------------------
 COPY docker/sagemaker_handler.py /opt/program/sagemaker_handler.py
+
+# ---------------------------------------------------------------------------
+# SSL fix — must be the very last pip install.
+# The pytorch conda base image ships an old pyopenssl that patches
+# ssl.SSLContext.verify_mode and causes infinite recursion in Python 3.11.
+# Upgrading pyopenssl + cryptography fixes the patch to be recursion-safe.
+# urllib3 is re-pinned here so nothing above can pull it back to 2.x.
+# ---------------------------------------------------------------------------
+RUN pip install --no-cache-dir \
+        "pyopenssl>=23.2.0" \
+        "cryptography>=42.0.0" \
+        "urllib3>=1.26,<2"
 
 # ---------------------------------------------------------------------------
 # Entrypoint script
