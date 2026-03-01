@@ -8,6 +8,13 @@ Supported hyperparameters:
   gin_config_file  : path to gin config (default: configs/ml-1m/hstu-sampled-softmax-n128-large-final.gin)
   dataset_name     : dataset identifier (default: ml-1m)
   master_port      : DDP master port (default: 12345)
+  
+  Tunable hyperparameters (override gin config):
+  learning_rate    : learning rate (float)
+  local_batch_size : batch size (int)
+  dropout_rate     : dropout rate (float)
+  num_negatives    : number of negative samples (int)
+  temperature      : softmax temperature (float)
 
 Data loading (in priority order):
   1. S3 input channel  — when launched with --data-s3-uri via launch_training.py,
@@ -101,7 +108,37 @@ if __name__ == "__main__":
         logger.info("Data preprocessing complete.")
 
     # -----------------------------------------------------------------------
-    # 4. Delegate to main.main() with the correct flags
+    # 4. Load gin config and apply hyperparameter overrides
+    # -----------------------------------------------------------------------
+    import gin
+    
+    logger.info(f"Loading gin config from {gin_config_file}")
+    gin.parse_config_file(gin_config_file)
+    
+    # Override gin config with tuner-provided hyperparameters
+    tunable_params = {
+        "learning_rate": ("train_fn.learning_rate", float),
+        "local_batch_size": ("train_fn.local_batch_size", int),
+        "dropout_rate": ("train_fn.dropout_rate", float),
+        "num_negatives": ("train_fn.num_negatives", int),
+        "temperature": ("train_fn.temperature", float),
+    }
+    
+    overrides = []
+    for param_name, (gin_param, param_type) in tunable_params.items():
+        if param_name in hyperparameters:
+            value = param_type(hyperparameters[param_name])
+            gin.bind_parameter(gin_param, value)
+            overrides.append(f"{gin_param}={value}")
+            logger.info(f"Override: {gin_param} = {value}")
+    
+    if overrides:
+        logger.info(f"Applied {len(overrides)} hyperparameter overrides")
+    else:
+        logger.info("No hyperparameter overrides - using gin config defaults")
+
+    # -----------------------------------------------------------------------
+    # 5. Delegate to main.main() with the correct flags
     # -----------------------------------------------------------------------
     sys.argv = [
         "train_research.py",
