@@ -40,6 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libgomp1 \
         nginx \
         ca-certificates \
+        openjdk-17-jre-headless \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
@@ -76,6 +77,8 @@ RUN pip install --no-cache-dir \
 RUN pip install --no-cache-dir \
         sagemaker-training \
         sagemaker-pytorch-inference \
+        torchserve \
+        torch-model-archiver \
         "sagemaker>=2.200.0" \
         boto3
 
