@@ -67,6 +67,11 @@ def model_fn(model_dir: str) -> dict:
         "GIN_CONFIG_FILE",
         "configs/ml-1m/hstu-sampled-softmax-n128-large-final.gin",
     )
+    # gin resolves relative paths via frame inspection (__file__ of the caller),
+    # which returns None when inference.py is loaded dynamically via importlib.
+    # Convert to an absolute path so gin can find the file unconditionally.
+    if not os.path.isabs(gin_config_file):
+        gin_config_file = os.path.join("/opt/ml/code", gin_config_file)
     dataset_name = os.environ.get("DATASET_NAME", "ml-1m")
     region = os.environ.get("FEATURE_STORE_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
 
