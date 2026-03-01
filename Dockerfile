@@ -75,7 +75,7 @@ RUN pip install --no-cache-dir \
 # ---------------------------------------------------------------------------
 RUN pip install --no-cache-dir \
         sagemaker-training \
-        sagemaker-inference \
+        sagemaker-pytorch-inference \
         "sagemaker>=2.200.0" \
         boto3
 
