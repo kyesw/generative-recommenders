@@ -1,7 +1,7 @@
 # Use official PyTorch 2.6.0 with CUDA 12.4 (matches requirements.txt)
 FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
 
-# Install SageMaker training and inference toolkits
+# Install SageMaker training toolkit (needed for SageMaker integration)
 RUN pip install --no-cache-dir sagemaker-training sagemaker-inference
 
 # System dependencies
@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y \
     git \
     wget \
     libgomp1 \
+    nginx \
     && rm -rf /var/lib/apt/lists/*
 
 # Install fbgemm-gpu and torchrec from PyTorch CUDA 12.4 wheel index
@@ -28,21 +29,34 @@ RUN pip install --no-cache-dir \
     matplotlib \
     absl-py \
     mlflow \
-    sagemaker-mlflow
+    sagemaker-mlflow \
+    flask \
+    gunicorn \
+    gevent
 
 # Copy minimal files for package installation
 WORKDIR /opt/ml/code
-COPY setup.py requirements.txt README.md ./
+COPY setup.py requirements.txt ./
 COPY generative_recommenders generative_recommenders/
 
 # Install the package (this compiles CUDA extensions)
 RUN pip install --no-cache-dir -e .
 
-ENV PYTHONPATH=/opt/ml/code
+# Create entrypoint script that handles both train and serve
+RUN echo '#!/bin/bash\n\
+if [ "$1" = "train" ]; then\n\
+    exec train\n\
+elif [ "$1" = "serve" ]; then\n\
+    exec serve\n\
+else\n\
+    exec "$@"\n\
+fi' > /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
 
-# Note: SAGEMAKER_PROGRAM will be set at runtime by SageMaker
-# Training: automatically set to entry_point script
-# Inference: set via environment or use inference.py as default
+ENV PYTHONPATH=/opt/ml/code
+ENV SAGEMAKER_PROGRAM=train_research.py
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["train"]
 
 # Note: Full code directory will be uploaded by SageMaker at runtime via source_dir
 # This image only needs dependencies + compiled CUDA extensions
