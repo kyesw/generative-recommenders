@@ -18,6 +18,8 @@ Environment variables (set at deploy time):
   GIN_CONFIG_FILE         path to gin config relative to /opt/ml/code/
   DATASET_NAME            dataset identifier (e.g. ml-1m)
   FEATURE_STORE_REGION    AWS region of the Feature Store
+  FEATURE_CACHE_SIZE      Max cached users (default: 10000)
+  FEATURE_CACHE_TTL       Cache TTL in seconds (default: 300)
 """
 
 import glob
@@ -25,6 +27,8 @@ import json
 import logging
 import os
 import sys
+import time
+from functools import lru_cache
 
 import torch
 
@@ -162,12 +166,18 @@ def model_fn(model_dir: str) -> dict:
     logger.info(f"Item embeddings pre-computed: shape={tuple(item_embeddings.shape)}, device={device}")
 
     # -----------------------------------------------------------------------
-    # 6. Initialise Feature Store client
+    # 6. Initialise Feature Store client with cache
     # -----------------------------------------------------------------------
     import boto3
     featurestore_client = boto3.client(
         "sagemaker-featurestore-runtime", region_name=region
     )
+    
+    cache_size = int(os.environ.get("FEATURE_CACHE_SIZE", "10000"))
+    cache_ttl = int(os.environ.get("FEATURE_CACHE_TTL", "300"))
+    
+    cache = {}
+    cache_stats = {"hits": 0, "misses": 0}
 
     return {
         "model": model,
@@ -179,6 +189,10 @@ def model_fn(model_dir: str) -> dict:
         "item_l2_norm": item_l2_norm,
         "l2_norm_eps": l2_norm_eps,
         "device": device,
+        "cache": cache,
+        "cache_ttl": cache_ttl,
+        "cache_size": cache_size,
+        "cache_stats": cache_stats,
     }
 
 
@@ -207,13 +221,17 @@ def predict_fn(data: dict, model_ctx: dict) -> dict:
     item_l2_norm = model_ctx["item_l2_norm"]
     l2_norm_eps = model_ctx["l2_norm_eps"]
     device = model_ctx["device"]
+    cache = model_ctx["cache"]
+    cache_ttl = model_ctx["cache_ttl"]
+    cache_size = model_ctx["cache_size"]
+    cache_stats = model_ctx["cache_stats"]
 
     user_id = data.get("user_id")
     top_k = int(data.get("top_k", 10))
     explicit_sequence = data.get("sequence")  # optional override
 
     # -------------------------------------------------------------------
-    # 1. Resolve interaction sequence
+    # 1. Resolve interaction sequence with cache
     # -------------------------------------------------------------------
     if explicit_sequence is not None:
         sequence_item_ids = [int(x) for x in explicit_sequence]
@@ -221,19 +239,49 @@ def predict_fn(data: dict, model_ctx: dict) -> dict:
     else:
         if user_id is None:
             raise ValueError("Request must provide 'user_id' or 'sequence'.")
-        response = featurestore_client.get_record(
-            FeatureGroupName=f"user-interactions-{dataset_name}",
-            RecordIdentifierValueAsString=str(user_id),
-        )
-        features = {
-            r["FeatureName"]: r["ValueAsString"] for r in response["Record"]
-        }
-        sequence_item_ids = [
-            int(x) for x in features["sequence_item_ids"].split(",") if x
-        ]
-        sequence_timestamps = [
-            int(x) for x in features["sequence_timestamps"].split(",") if x
-        ]
+        
+        # Check cache
+        cache_key = user_id
+        now = time.time()
+        
+        if cache_key in cache:
+            cached_data, cached_time = cache[cache_key]
+            if now - cached_time < cache_ttl:
+                cache_stats["hits"] += 1
+                sequence_item_ids, sequence_timestamps = cached_data
+            else:
+                del cache[cache_key]
+                cached_data = None
+        else:
+            cached_data = None
+        
+        if cached_data is None:
+            cache_stats["misses"] += 1
+            response = featurestore_client.get_record(
+                FeatureGroupName=f"user-interactions-{dataset_name}",
+                RecordIdentifierValueAsString=str(user_id),
+            )
+            features = {
+                r["FeatureName"]: r["ValueAsString"] for r in response["Record"]
+            }
+            sequence_item_ids = [
+                int(x) for x in features["sequence_item_ids"].split(",") if x
+            ]
+            sequence_timestamps = [
+                int(x) for x in features["sequence_timestamps"].split(",") if x
+            ]
+            
+            # Evict oldest if cache full
+            if len(cache) >= cache_size:
+                oldest_key = min(cache.keys(), key=lambda k: cache[k][1])
+                del cache[oldest_key]
+            
+            cache[cache_key] = ((sequence_item_ids, sequence_timestamps), now)
+        
+        if cache_stats["hits"] + cache_stats["misses"] % 100 == 0:
+            total = cache_stats["hits"] + cache_stats["misses"]
+            hit_rate = cache_stats["hits"] / total if total > 0 else 0
+            logger.info(f"Cache stats: {cache_stats['hits']}/{total} hits ({hit_rate:.2%})")
 
     if not sequence_item_ids:
         return {"user_id": user_id, "item_ids": []}

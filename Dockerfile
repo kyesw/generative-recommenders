@@ -1,4 +1,5 @@
-FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
+# SageMaker PyTorch 2.5 with CUDA 12.4 (closest to 2.6)
+FROM 763104351884.dkr.ecr.ap-norhteast-2.amazonaws.com/pytorch-training:2.5.1-gpu-py311-cu124-ubuntu22.04-sagemaker
 
 # System dependencies
 RUN apt-get update && apt-get install -y \
@@ -22,12 +23,8 @@ RUN pip install --no-cache-dir \
     click \
     matplotlib \
     absl-py \
-    sagemaker-training \
-    sagemaker-inference \
-    multi-model-server \
     mlflow \
-    sagemaker-mlflow && \
-    ln -sf $(which serve) /usr/local/bin/serve
+    sagemaker-mlflow
 
 # Copy repo and compile CUDA extensions in place
 COPY . /opt/ml/code/

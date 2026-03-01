@@ -87,6 +87,20 @@ def parse_args() -> argparse.Namespace:
         dest="feature_store_region",
         help="AWS region for Feature Store (defaults to --region).",
     )
+    parser.add_argument(
+        "--cache-size",
+        type=int,
+        default=10000,
+        dest="cache_size",
+        help="Max users to cache (default: 10000, 0 to disable).",
+    )
+    parser.add_argument(
+        "--cache-ttl",
+        type=int,
+        default=300,
+        dest="cache_ttl",
+        help="Cache TTL in seconds (default: 300).",
+    )
     return parser.parse_args()
 
 
@@ -147,6 +161,8 @@ def main() -> None:
         "GIN_CONFIG_FILE": args.gin_config_file,
         "DATASET_NAME": args.dataset_name,
         "FEATURE_STORE_REGION": feature_store_region,
+        "FEATURE_CACHE_SIZE": str(args.cache_size),
+        "FEATURE_CACHE_TTL": str(args.cache_ttl),
     }
 
     logger.info(f"Image URI     : {image_uri}")
