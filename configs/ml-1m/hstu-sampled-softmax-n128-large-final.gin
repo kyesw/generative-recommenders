@@ -41,5 +41,5 @@ train_fn.l2_norm_eps = 1e-6
 
 train_fn.enable_tf32 = True
 
-create_data_loader.prefetch_factor = 128
-create_data_loader.num_workers = 8
+create_data_loader.prefetch_factor = 4
+create_data_loader.num_workers = 4

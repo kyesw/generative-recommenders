@@ -46,12 +46,17 @@ def create_data_loader(
         )
     else:
         sampler = None
-    data_loader = torch.utils.data.DataLoader(
-        dataset,
+    _num_workers = num_workers or 0
+    loader_kwargs = dict(
         batch_size=batch_size,
-        # shuffle=True, cannot use with sampler
-        num_workers=num_workers or 0,
+        num_workers=_num_workers,
         sampler=sampler,
-        prefetch_factor=prefetch_factor,
     )
+    if _num_workers > 0:
+        # forkserver avoids inheriting a broken CUDA context from the parent
+        # process (which has NCCL/DDP initialized), which would cause forked
+        # workers to crash silently and produce an empty iterator.
+        loader_kwargs["prefetch_factor"] = prefetch_factor
+        loader_kwargs["multiprocessing_context"] = "forkserver"
+    data_loader = torch.utils.data.DataLoader(dataset, **loader_kwargs)
     return sampler, data_loader
