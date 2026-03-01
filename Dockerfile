@@ -23,6 +23,8 @@ RUN pip install --no-cache-dir \
     matplotlib \
     absl-py \
     sagemaker-training \
+    sagemaker-inference \
+    multi-model-server \
     mlflow \
     sagemaker-mlflow
 

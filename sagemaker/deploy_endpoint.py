@@ -16,7 +16,7 @@ Usage:
 
 Optional flags:
   --endpoint-name       Name for the endpoint (default: generative-recommenders-<timestamp>)
-  --instance-type       Instance type (default: ml.g4dn.xlarge)
+  --instance-type       Instance type (default: ml.c5.xlarge; GPU not required for ml-1m)
   --image-tag           ECR image tag (default: latest)
   --dataset-name        Dataset name passed to inference script (default: ml-1m)
   --gin-config-file     Gin config path relative to /opt/ml/code (default: ml-1m large)
@@ -71,7 +71,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--instance-type",
-        default="ml.g4dn.xlarge",
+        default="ml.c5.xlarge",
         dest="instance_type",
     )
     parser.add_argument("--image-tag", default="latest", dest="image_tag")
