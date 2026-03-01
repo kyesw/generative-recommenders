@@ -35,6 +35,34 @@ logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# EMF (Embedded Metric Format) helper
+# CloudWatch Logs ingests these JSON lines and creates CloudWatch metrics
+# automatically — no boto3 API calls, no added request latency.
+# ---------------------------------------------------------------------------
+_ENDPOINT_NAME = os.environ.get("ENDPOINT_NAME", "local")
+
+def _emit_emf(metrics: dict) -> None:
+    """
+    Write one EMF log line to stdout.
+
+    metrics: {metric_name: (value, unit)}
+      e.g. {"TotalLatencyMs": (42.3, "Milliseconds"), "CacheHit": (1, "Count")}
+    """
+    payload = {
+        "_aws": {
+            "Timestamp": int(time.time() * 1000),
+            "CloudWatchMetrics": [{
+                "Namespace": "GenerativeRecommenders/Inference",
+                "Dimensions": [["EndpointName"]],
+                "Metrics": [{"Name": k, "Unit": v[1]} for k, v in metrics.items()],
+            }],
+        },
+        "EndpointName": _ENDPOINT_NAME,
+        **{k: v[0] for k, v in metrics.items()},
+    }
+    print(json.dumps(payload), flush=True)
+
+# ---------------------------------------------------------------------------
 # model_fn — called once when the endpoint starts
 # ---------------------------------------------------------------------------
 
@@ -243,6 +271,10 @@ def predict_fn(data: dict, model_ctx: dict) -> dict:
     top_k = int(data.get("top_k", 10))
     explicit_sequence = data.get("sequence")  # optional override
 
+    t_start = time.perf_counter()
+    fs_latency_ms = 0.0
+    cache_hit = False
+
     # -------------------------------------------------------------------
     # 1. Resolve interaction sequence with cache
     # -------------------------------------------------------------------
@@ -253,7 +285,6 @@ def predict_fn(data: dict, model_ctx: dict) -> dict:
         if user_id is None:
             raise ValueError("Request must provide 'user_id' or 'sequence'.")
 
-        # Check cache
         cache_key = user_id
         now = time.time()
 
@@ -261,6 +292,7 @@ def predict_fn(data: dict, model_ctx: dict) -> dict:
             cached_data, cached_time = cache[cache_key]
             if now - cached_time < cache_ttl:
                 cache_stats["hits"] += 1
+                cache_hit = True
                 sequence_item_ids, sequence_timestamps = cached_data
             else:
                 del cache[cache_key]
@@ -270,6 +302,7 @@ def predict_fn(data: dict, model_ctx: dict) -> dict:
 
         if cached_data is None:
             cache_stats["misses"] += 1
+            t_fs = time.perf_counter()
             response = featurestore_client.get_record(
                 FeatureGroupName=f"user-interactions-{dataset_name}",
                 RecordIdentifierValueAsString=str(user_id),
@@ -283,6 +316,7 @@ def predict_fn(data: dict, model_ctx: dict) -> dict:
             sequence_timestamps = [
                 int(x) for x in features["sequence_timestamps"].split(",") if x
             ]
+            fs_latency_ms = (time.perf_counter() - t_fs) * 1000
 
             # Evict oldest if cache full
             if len(cache) >= cache_size:
@@ -297,6 +331,13 @@ def predict_fn(data: dict, model_ctx: dict) -> dict:
             logger.info(f"Cache stats: {cache_stats['hits']}/{total} hits ({hit_rate:.2%})")
 
     if not sequence_item_ids:
+        _emit_emf({
+            "TotalLatencyMs":        (round((time.perf_counter() - t_start) * 1000, 2), "Milliseconds"),
+            "FeatureStoreLatencyMs": (round(fs_latency_ms, 2),                         "Milliseconds"),
+            "ModelEncodeLatencyMs":  (0.0,                                              "Milliseconds"),
+            "TopKLatencyMs":         (0.0,                                              "Milliseconds"),
+            "CacheHit":              (int(cache_hit),                                   "Count"),
+        })
         return {"user_id": user_id, "item_ids": []}
 
     # Take the most recent max_sequence_length items (oldest-first ordering
@@ -325,6 +366,7 @@ def predict_fn(data: dict, model_ctx: dict) -> dict:
     # 3. Encode user sequence → query embedding (B, D), already L2-normed
     #    by the model's output_postproc_module (L2NormEmbeddingPostprocessor)
     # -------------------------------------------------------------------
+    t_model = time.perf_counter()
     with torch.no_grad():
         past_embeddings = model.get_item_embeddings(seq_features.past_ids)
         query_embedding = model.encode(
@@ -333,10 +375,12 @@ def predict_fn(data: dict, model_ctx: dict) -> dict:
             past_embeddings=past_embeddings,
             past_payloads=seq_features.past_payloads,
         )  # (1, D)
+    model_latency_ms = (time.perf_counter() - t_model) * 1000
 
     # -------------------------------------------------------------------
     # 4. Top-K retrieval via dot product with pre-computed item embeddings
     # -------------------------------------------------------------------
+    t_topk = time.perf_counter()
     scores = torch.matmul(query_embedding, item_embeddings.T)  # (1, N)
 
     # Mask out items the user has already interacted with.
@@ -348,6 +392,15 @@ def predict_fn(data: dict, model_ctx: dict) -> dict:
 
     _, top_k_indices = torch.topk(scores[0], k=min(top_k, scores.shape[1]))
     top_k_item_ids = (top_k_indices + 1).cpu().tolist()  # back to 1-indexed IDs
+    topk_latency_ms = (time.perf_counter() - t_topk) * 1000
+
+    _emit_emf({
+        "TotalLatencyMs":        (round((time.perf_counter() - t_start) * 1000, 2), "Milliseconds"),
+        "FeatureStoreLatencyMs": (round(fs_latency_ms, 2),                         "Milliseconds"),
+        "ModelEncodeLatencyMs":  (round(model_latency_ms, 2),                      "Milliseconds"),
+        "TopKLatencyMs":         (round(topk_latency_ms, 2),                       "Milliseconds"),
+        "CacheHit":              (int(cache_hit),                                   "Count"),
+    })
 
     return {"user_id": user_id, "item_ids": top_k_item_ids}
 
