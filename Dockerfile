@@ -32,7 +32,7 @@ RUN pip install --no-cache-dir \
 
 # Copy minimal files for package installation
 WORKDIR /opt/ml/code
-COPY setup.py requirements.txt ./
+COPY setup.py requirements.txt README.md ./
 COPY generative_recommenders generative_recommenders/
 
 # Install the package (this compiles CUDA extensions)
