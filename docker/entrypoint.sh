@@ -8,7 +8,7 @@ case "$1" in
     serve)
         exec gunicorn \
             --workers 1 \
-            --worker-class gevent \
+            --worker-class sync \
             --bind 0.0.0.0:8080 \
             --timeout 300 \
             --preload \
