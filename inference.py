@@ -227,6 +227,7 @@ def model_fn(model_dir: str) -> dict:
         "featurestore_client": featurestore_client,
         "dataset_name": dataset_name,
         "max_sequence_length": max_sequence_length,
+        "gr_output_length": gr_output_length,
         "max_item_id": max_item_id,
         "item_l2_norm": item_l2_norm,
         "l2_norm_eps": l2_norm_eps,
@@ -260,6 +261,7 @@ def predict_fn(data: dict, model_ctx: dict) -> dict:
     featurestore_client = model_ctx["featurestore_client"]
     dataset_name = model_ctx["dataset_name"]
     max_sequence_length = model_ctx["max_sequence_length"]
+    gr_output_length = model_ctx["gr_output_length"]
     item_l2_norm = model_ctx["item_l2_norm"]
     l2_norm_eps = model_ctx["l2_norm_eps"]
     device = model_ctx["device"]
@@ -349,9 +351,12 @@ def predict_fn(data: dict, model_ctx: dict) -> dict:
 
     # -------------------------------------------------------------------
     # 2. Build SequentialFeatures
+    # Training appends gr_output_length zero-slots to both ids and timestamps
+    # (see features.py row_to_sequential_features). Inference must match.
     # -------------------------------------------------------------------
-    past_ids = torch.zeros((1, max_sequence_length), dtype=torch.long)
-    past_timestamps = torch.zeros((1, max_sequence_length), dtype=torch.long)
+    total_len = max_sequence_length + gr_output_length
+    past_ids = torch.zeros((1, total_len), dtype=torch.long)
+    past_timestamps = torch.zeros((1, total_len), dtype=torch.long)
     past_ids[0, :seq_len] = torch.tensor(item_ids_trunc, dtype=torch.long)
     past_timestamps[0, :seq_len] = torch.tensor(timestamps_trunc, dtype=torch.long)
     past_lengths = torch.tensor([seq_len], dtype=torch.long)
