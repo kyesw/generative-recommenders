@@ -472,19 +472,57 @@ def train_fn(
             device=device,
             float_dtype=torch.bfloat16 if main_module_bf16 else None,
         )
-        for eval_iter, row in enumerate(iter(eval_data_loader)):
-            seq_features, target_ids, target_ratings = movielens_seq_features_from_row(
-                row, device=device, max_output_length=gr_output_length + 1
-            )
-            eval_dict = eval_metrics_v2_from_tensors(
-                eval_state,
-                model.module,
-                seq_features,
-                target_ids=target_ids,
-                target_ratings=target_ratings,
-                user_max_batch_size=eval_user_max_batch_size,
-                dtype=torch.bfloat16 if main_module_bf16 else None,
-            )
+        logging.info(
+            f"rank {rank}: starting per-epoch eval — "
+            f"eval_dataset_len={len(eval_data_loader.dataset)}, "
+            f"estimated_batches={len(eval_data_loader)}, "
+            f"batch_size={eval_batch_size}, "
+            f"world_size={world_size}, rank={rank}"
+        )
+        _eval_loader_iter = iter(eval_data_loader)
+        eval_iter = 0
+        while True:
+            # Use explicit next() so that a StopIteration raised from inside
+            # dataset.__getitem__ (which Python's for-loop would swallow silently)
+            # is caught and logged here instead.
+            try:
+                row = next(_eval_loader_iter)
+            except StopIteration:
+                if eval_iter == 0:
+                    logging.error(
+                        f"rank {rank}: eval DataLoader raised StopIteration on the first "
+                        f"batch — dataset appears empty to the loader. "
+                        f"eval_dataset_len={len(eval_data_loader.dataset)}, "
+                        f"estimated_batches={len(eval_data_loader)}"
+                    )
+                break
+            except Exception as exc:
+                logging.error(
+                    f"rank {rank}: eval DataLoader raised an unexpected exception at "
+                    f"iter {eval_iter}: {exc}",
+                    exc_info=True,
+                )
+                raise
+
+            try:
+                seq_features, target_ids, target_ratings = movielens_seq_features_from_row(
+                    row, device=device, max_output_length=gr_output_length + 1
+                )
+                eval_dict = eval_metrics_v2_from_tensors(
+                    eval_state,
+                    model.module,
+                    seq_features,
+                    target_ids=target_ids,
+                    target_ratings=target_ratings,
+                    user_max_batch_size=eval_user_max_batch_size,
+                    dtype=torch.bfloat16 if main_module_bf16 else None,
+                )
+            except Exception as exc:
+                logging.error(
+                    f"rank {rank}: exception during eval iter {eval_iter}: {exc}",
+                    exc_info=True,
+                )
+                raise
 
             if eval_dict_all is None:
                 eval_dict_all = {}
@@ -501,7 +539,16 @@ def train_fn(
                 )
                 break
 
-        assert eval_dict_all is not None
+            eval_iter += 1
+
+        if eval_dict_all is None:
+            raise RuntimeError(
+                f"rank {rank}: eval_data_loader produced 0 batches. "
+                f"eval_dataset_len={len(eval_data_loader.dataset)}, "
+                f"estimated_batches={len(eval_data_loader)}, "
+                f"batch_size={eval_batch_size}, world_size={world_size}, rank={rank}. "
+                f"Check that the CSV was downloaded and that the sampler configuration is correct."
+            )
         for k, v in eval_dict_all.items():
             eval_dict_all[k] = torch.cat(v, dim=-1)
 
