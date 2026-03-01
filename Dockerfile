@@ -26,11 +26,8 @@ RUN pip install --no-cache-dir \
     sagemaker-inference \
     multi-model-server \
     mlflow \
-    sagemaker-mlflow
-
-# Ensure SageMaker's 'serve' command is in /usr/local/bin so the NVIDIA
-# container entrypoint can find it regardless of conda PATH initialisation order.
-RUN ln -sf /opt/conda/bin/serve /usr/local/bin/serve
+    sagemaker-mlflow && \
+    ln -sf $(which serve) /usr/local/bin/serve
 
 # Copy repo and compile CUDA extensions in place
 COPY . /opt/ml/code/
