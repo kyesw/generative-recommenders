@@ -167,6 +167,8 @@ def main() -> None:
         initial_instance_count=1,
         instance_type=args.instance_type,
         endpoint_name=endpoint_name,
+        container_startup_health_check_timeout=600,  # 10 minutes for model loading
+        wait=True,
     )
 
     logger.info(f"\nEndpoint '{endpoint_name}' is live.")

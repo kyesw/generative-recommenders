@@ -29,6 +29,7 @@ import json
 import logging
 import os
 import sys
+import tempfile
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -108,14 +109,8 @@ if __name__ == "__main__":
         logger.info("Data preprocessing complete.")
 
     # -----------------------------------------------------------------------
-    # 4. Load gin config and apply hyperparameter overrides
+    # 4. Create modified gin config with hyperparameter overrides
     # -----------------------------------------------------------------------
-    import gin
-    
-    logger.info(f"Loading gin config from {gin_config_file}")
-    gin.parse_config_file(gin_config_file)
-    
-    # Override gin config with tuner-provided hyperparameters
     tunable_params = {
         "learning_rate": ("train_fn.learning_rate", float),
         "local_batch_size": ("train_fn.local_batch_size", int),
@@ -124,16 +119,30 @@ if __name__ == "__main__":
         "temperature": ("train_fn.temperature", float),
     }
     
-    overrides = []
-    for param_name, (gin_param, param_type) in tunable_params.items():
-        if param_name in hyperparameters:
-            value = param_type(hyperparameters[param_name])
-            gin.bind_parameter(gin_param, value)
-            overrides.append(f"{gin_param}={value}")
-            logger.info(f"Override: {gin_param} = {value}")
+    # Check if we have any overrides
+    has_overrides = any(param_name in hyperparameters for param_name in tunable_params.keys())
     
-    if overrides:
-        logger.info(f"Applied {len(overrides)} hyperparameter overrides")
+    if has_overrides:
+        # Read original gin config
+        with open(gin_config_file, 'r') as f:
+            original_config = f.read()
+        
+        # Create a temporary gin config with overrides appended
+        override_lines = ["\n# Hyperparameter overrides from SageMaker tuner:"]
+        for param_name, (gin_param, param_type) in tunable_params.items():
+            if param_name in hyperparameters:
+                value = param_type(hyperparameters[param_name])
+                override_lines.append(f"{gin_param} = {value}")
+                logger.info(f"Override: {gin_param} = {value}")
+        
+        # Write to temporary file
+        temp_gin = tempfile.NamedTemporaryFile(mode='w', suffix='.gin', delete=False, dir='/tmp')
+        temp_gin.write(original_config)
+        temp_gin.write('\n'.join(override_lines))
+        temp_gin.close()
+        
+        gin_config_file = temp_gin.name
+        logger.info(f"Created temporary gin config with overrides: {gin_config_file}")
     else:
         logger.info("No hyperparameter overrides - using gin config defaults")
 
