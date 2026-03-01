@@ -16,7 +16,7 @@ Response (JSON):
 
 Environment variables (set at deploy time):
   MLFLOW_TRACKING_URI     URI of the MLflow tracking server
-  MLFLOW_RUN_ID           MLflow run ID to load hyperparameters and checkpoint from
+  MLFLOW_RUN_ID           MLflow run ID to load gin config and checkpoint from
   FEATURE_STORE_REGION    AWS region of the Feature Store
   FEATURE_CACHE_SIZE      Max cached users (default: 10000)
   FEATURE_CACHE_TTL       Cache TTL in seconds (default: 300)
@@ -39,7 +39,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def model_fn(model_dir: str) -> dict:
-    """Fetch hyperparameters and checkpoint from MLflow, build model."""
+    """Download gin config and checkpoint from MLflow, build model."""
+    import gin
     import mlflow
     from generative_recommenders.research.data.preprocessor import get_common_preprocessors
     from generative_recommenders.research.modeling.sequential.embedding_modules import (
@@ -58,40 +59,54 @@ def model_fn(model_dir: str) -> dict:
     from generative_recommenders.research.modeling.similarity_utils import (
         get_similarity_function,
     )
+    # Importing train_fn registers it as @gin.configurable so gin can bind
+    # train_fn.* parameters when we parse the config below.
+    from generative_recommenders.research.trainer.train import train_fn  # noqa: F401
 
-    # -----------------------------------------------------------------------
-    # 1. Fetch hyperparameters from MLflow run
-    # -----------------------------------------------------------------------
     tracking_uri = os.environ["MLFLOW_TRACKING_URI"]
     run_id = os.environ["MLFLOW_RUN_ID"]
     region = os.environ.get("FEATURE_STORE_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
 
     mlflow.set_tracking_uri(tracking_uri)
-    run = mlflow.get_run(run_id)
-    p = run.data.params
-    logger.info(f"Fetched params from MLflow run {run_id}: {p}")
 
-    dataset_name            = p["dataset_name"]
-    max_sequence_length     = int(p["max_sequence_length"])
-    item_embedding_dim      = int(p["item_embedding_dim"])
-    main_module             = p["main_module"]
-    interaction_module_type = p["interaction_module_type"]
-    user_embedding_norm     = p["user_embedding_norm"]
-    item_l2_norm            = p["item_l2_norm"] == "True"
-    l2_norm_eps             = float(p["l2_norm_eps"])
-    gr_output_length        = int(p["gr_output_length"])
+    # -----------------------------------------------------------------------
+    # 1. Download gin config from MLflow and parse it
+    #    This gives us train_fn.* AND sub-module bindings (hstu_encoder.*, etc.)
+    # -----------------------------------------------------------------------
+    gin_config_path = mlflow.artifacts.download_artifacts(
+        run_id=run_id, artifact_path="gin_config/operative_config.gin"
+    )
+    gin.parse_config_file(gin_config_path)
+    logger.info(f"Gin config loaded from MLflow run {run_id}: {gin_config_path}")
+
+    # -----------------------------------------------------------------------
+    # 2. Read training hyperparameters from gin bindings
+    # -----------------------------------------------------------------------
+    dataset_name            = gin.query_parameter("train_fn.dataset_name")
+    max_sequence_length     = gin.query_parameter("train_fn.max_sequence_length")
+    item_embedding_dim      = gin.query_parameter("train_fn.item_embedding_dim")
+    main_module             = gin.query_parameter("train_fn.main_module")
+    interaction_module_type = gin.query_parameter("train_fn.interaction_module_type")
+    user_embedding_norm     = gin.query_parameter("train_fn.user_embedding_norm")
+    item_l2_norm            = gin.query_parameter("train_fn.item_l2_norm")
+    l2_norm_eps             = gin.query_parameter("train_fn.l2_norm_eps")
+    try:
+        gr_output_length = gin.query_parameter("train_fn.gr_output_length")
+    except ValueError:
+        gr_output_length = 10  # default
 
     logger.info(f"Dataset: {dataset_name}, main_module: {main_module}")
 
     # -----------------------------------------------------------------------
-    # 2. Resolve max_item_id from the dataset preprocessor
+    # 3. Resolve max_item_id from the dataset preprocessor
     # -----------------------------------------------------------------------
     dp = get_common_preprocessors()[dataset_name]
     max_item_id = dp.expected_max_item_id()
     logger.info(f"max_item_id: {max_item_id}")
 
     # -----------------------------------------------------------------------
-    # 3. Build model architecture (gin no longer needed)
+    # 4. Build model — gin configures HSTU sub-components automatically
+    #    (hstu_encoder.num_blocks, num_heads, dqk, dv, etc.)
     # -----------------------------------------------------------------------
     embedding_module = LocalEmbeddingModule(
         num_items=max_item_id,
@@ -124,7 +139,7 @@ def model_fn(model_dir: str) -> dict:
     )
 
     # -----------------------------------------------------------------------
-    # 4. Download checkpoint from MLflow artifact store
+    # 5. Download checkpoint from MLflow artifact store and load weights
     # -----------------------------------------------------------------------
     local_dir = mlflow.artifacts.download_artifacts(
         run_id=run_id, artifact_path="checkpoints"
@@ -150,7 +165,7 @@ def model_fn(model_dir: str) -> dict:
     logger.info(f"Checkpoint loaded (epoch {checkpoint.get('epoch', '?')})")
 
     # -----------------------------------------------------------------------
-    # 5. Move model to device and pre-compute normalised item embeddings
+    # 6. Move model to device and pre-compute normalised item embeddings
     # -----------------------------------------------------------------------
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device).eval()
@@ -167,7 +182,7 @@ def model_fn(model_dir: str) -> dict:
     logger.info(f"Item embeddings pre-computed: shape={tuple(item_embeddings.shape)}, device={device}")
 
     # -----------------------------------------------------------------------
-    # 6. Initialise Feature Store client with cache
+    # 7. Initialise Feature Store client with cache
     # -----------------------------------------------------------------------
     import boto3
     featurestore_client = boto3.client(

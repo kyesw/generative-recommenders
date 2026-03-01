@@ -148,6 +148,9 @@ def train_fn(
             "sagemaker.training_job_name": os.environ.get("TRAINING_JOB_NAME", "local"),
             "sagemaker.tuning_job_name": os.environ.get("HYPERPARAMETER_TUNING_JOB_NAME", ""),
         })
+        # Log the full gin config so inference can reconstruct the exact
+        # architecture (including hstu_encoder.* sub-module bindings).
+        mlflow.log_text(gin.config_str(), "gin_config/operative_config.gin")
         mlflow.log_params({
             "dataset_name": dataset_name,
             "max_sequence_length": max_sequence_length,
