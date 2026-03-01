@@ -1,5 +1,8 @@
-# SageMaker PyTorch 2.5 with CUDA 12.4 (closest to 2.6)
-FROM 763104351884.dkr.ecr.ap-northeast-2.amazonaws.com/pytorch-training:2.5.1-gpu-py311-cu124-ubuntu22.04-sagemaker
+# Use official PyTorch 2.6.0 with CUDA 12.4 (matches requirements.txt)
+FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
+
+# Install SageMaker training toolkit (needed for SageMaker integration)
+RUN pip install --no-cache-dir sagemaker-training
 
 # System dependencies
 RUN apt-get update && apt-get install -y \
@@ -11,14 +14,15 @@ RUN apt-get update && apt-get install -y \
 
 # Install fbgemm-gpu and torchrec from PyTorch CUDA 12.4 wheel index
 RUN pip install --no-cache-dir \
-    fbgemm-gpu \
-    torchrec \
+    fbgemm-gpu>=1.1.0 \
+    torchrec>=1.1.0 \
     --index-url https://download.pytorch.org/whl/cu124
 
 # Install Python dependencies
 RUN pip install --no-cache-dir \
-    gin-config \
-    pandas \
+    gin-config>=0.5.0 \
+    pandas>=2.2.0 \
+    tensorboard>=2.19.0 \
     pybind11 \
     click \
     matplotlib \
@@ -26,11 +30,16 @@ RUN pip install --no-cache-dir \
     mlflow \
     sagemaker-mlflow
 
-# Copy repo and compile CUDA extensions in place
-COPY . /opt/ml/code/
+# Copy minimal files for package installation
 WORKDIR /opt/ml/code
+COPY setup.py requirements.txt ./
+COPY generative_recommenders generative_recommenders/
+
+# Install the package (this compiles CUDA extensions)
 RUN pip install --no-cache-dir -e .
 
 ENV PYTHONPATH=/opt/ml/code
-# Default entry point; overridable via SAGEMAKER_PROGRAM env var
 ENV SAGEMAKER_PROGRAM=train_research.py
+
+# Note: Full code directory will be uploaded by SageMaker at runtime via source_dir
+# This image only needs dependencies + compiled CUDA extensions

@@ -203,6 +203,8 @@ def main() -> None:
         environment=environment,
         output_path=output_path,
         region_name=args.region,
+        source_dir=".",
+        entry_point=entry_point_script,
     )
 
     inputs = {"training": args.data_s3_uri} if args.data_s3_uri else None

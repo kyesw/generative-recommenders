@@ -270,6 +270,8 @@ def main() -> None:
         output_path=output_path,
         metric_definitions=METRIC_DEFINITIONS,
         region_name=args.region,
+        source_dir=".",
+        entry_point=entry_point_script,
     )
 
     # Build hyperparameter ranges
