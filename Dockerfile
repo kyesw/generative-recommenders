@@ -70,7 +70,8 @@ RUN pip install --no-cache-dir \
 RUN pip install --no-cache-dir \
         sagemaker-training \
         "sagemaker>=2.200.0" \
-        boto3
+        boto3 \
+        "urllib3<2"
 
 # ---------------------------------------------------------------------------
 # MLflow experiment tracking
