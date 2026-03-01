@@ -29,6 +29,7 @@ import os
 import sys
 import time
 
+import fbgemm_gpu  # noqa: F401 — registers torch.ops.fbgemm.* custom ops
 import torch
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
