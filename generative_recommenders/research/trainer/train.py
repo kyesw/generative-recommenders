@@ -560,10 +560,10 @@ def train_fn(
 
         if _use_mlflow:
             mlflow.log_metrics({
-                "eval/ndcg@10": ndcg_10,
-                "eval/ndcg@50": ndcg_50,
-                "eval/hr@10": hr_10,
-                "eval/hr@50": hr_50,
+                "eval/ndcg_at_10": ndcg_10,
+                "eval/ndcg_at_50": ndcg_50,
+                "eval/hr_at_10": hr_10,
+                "eval/hr_at_50": hr_50,
                 "eval/mrr": mrr,
             }, step=epoch)
 
