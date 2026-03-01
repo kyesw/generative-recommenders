@@ -5,7 +5,7 @@
 #             → sagemaker-training-toolkit reads SAGEMAKER_PROGRAM and executes it.
 #
 # Inference:  SageMaker runs `docker run <image> serve`
-#             → gunicorn serves docker/sagemaker_handler.py (Flask) on port 8080,
+#             → uvicorn serves docker/sagemaker_handler.py (FastAPI) on port 8080,
 #               routing GET /ping (health check) and POST /invocations (predict).
 #
 # Integrations:
@@ -101,8 +101,8 @@ RUN pip install --no-cache-dir \
         click \
         matplotlib \
         absl-py \
-        flask \
-        gunicorn
+        fastapi \
+        uvicorn
 
 # ---------------------------------------------------------------------------
 # Install the generative-recommenders package (compiles CUDA extensions).

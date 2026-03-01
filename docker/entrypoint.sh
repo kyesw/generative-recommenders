@@ -6,13 +6,12 @@ case "$1" in
         exec train
         ;;
     serve)
-        exec gunicorn \
+        exec uvicorn \
+            --host 0.0.0.0 \
+            --port 8080 \
             --workers 1 \
-            --worker-class sync \
-            --bind 0.0.0.0:8080 \
-            --timeout 300 \
             --log-level info \
-            --chdir /opt/program \
+            --app-dir /opt/program \
             sagemaker_handler:app
         ;;
     *)

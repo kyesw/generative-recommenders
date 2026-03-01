@@ -1,19 +1,17 @@
 """
-Minimal SageMaker real-time inference server.
+Minimal SageMaker real-time inference server (FastAPI + uvicorn).
 
-Loads the handler module defined by SAGEMAKER_PROGRAM and serves
+Single process, no forking — CUDA-safe by design.
+
+Routes:
   GET  /ping         → 200 OK  (SageMaker health check)
   POST /invocations  → prediction result
 
-The handler module must expose:
+The handler module (SAGEMAKER_PROGRAM) must expose:
     model_fn(model_dir)                    → model context
     input_fn(request_body, content_type)   → parsed input
     predict_fn(data, model)                → prediction
     output_fn(prediction, accept)          → serialised response string
-
-Launched by gunicorn with --preload so model_fn runs once in the
-master process before workers fork — model weights are shared via
-copy-on-write and not reloaded per worker.
 """
 
 import importlib.util
@@ -21,13 +19,14 @@ import logging
 import os
 import sys
 
-from flask import Flask, Response, request
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import PlainTextResponse
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Load the inference handler module at import time (before gunicorn forks).
+# Load the inference handler module at startup.
 # ---------------------------------------------------------------------------
 _program = os.environ.get("SAGEMAKER_PROGRAM", "inference.py")
 _code_dir = os.environ.get("PYTHONPATH", "/opt/ml/code").split(":")[0]
@@ -45,21 +44,22 @@ _model = _handler.model_fn(_model_dir)
 logger.info("model_fn complete — server ready")
 
 # ---------------------------------------------------------------------------
-# Flask application
+# FastAPI application
 # ---------------------------------------------------------------------------
-app = Flask(__name__)
+app = FastAPI()
 
 
-@app.route("/ping", methods=["GET"])
+@app.get("/ping")
 def ping():
-    return Response("", status=200)
+    return PlainTextResponse("", status_code=200)
 
 
-@app.route("/invocations", methods=["POST"])
-def invocations():
-    content_type = request.content_type or "application/json"
-    accept = request.headers.get("Accept", "application/json")
-    data = _handler.input_fn(request.get_data(as_text=True), content_type)
+@app.post("/invocations")
+async def invocations(request: Request):
+    content_type = request.headers.get("content-type", "application/json")
+    accept = request.headers.get("accept", "application/json")
+    body = (await request.body()).decode("utf-8")
+    data = _handler.input_fn(body, content_type)
     prediction = _handler.predict_fn(data, _model)
     result = _handler.output_fn(prediction, accept)
-    return Response(result, mimetype=accept)
+    return Response(content=result, media_type=accept)
