@@ -354,7 +354,7 @@ def predict_fn(data: dict, model_ctx: dict) -> dict:
     # Training appends gr_output_length zero-slots to both ids and timestamps
     # (see features.py row_to_sequential_features). Inference must match.
     # -------------------------------------------------------------------
-    total_len = max_sequence_length + gr_output_length
+    total_len = max_sequence_length + gr_output_length + 1
     past_ids = torch.zeros((1, total_len), dtype=torch.long)
     past_timestamps = torch.zeros((1, total_len), dtype=torch.long)
     past_ids[0, :seq_len] = torch.tensor(item_ids_trunc, dtype=torch.long)
