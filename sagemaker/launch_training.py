@@ -26,6 +26,13 @@ Providing pre-uploaded S3 data (recommended):
   python sagemaker/launch_training.py --pipeline research \\
       --role ... --bucket my-bucket \\
       --data-s3-uri s3://my-bucket/generative-recommenders/data/ml-1m/
+
+MLflow tracking (optional):
+  python sagemaker/launch_training.py --pipeline research \\
+      --role ... --bucket my-bucket \\
+      --data-s3-uri s3://my-bucket/generative-recommenders/data/ml-1m/ \\
+      --mlflow-tracking-uri https://<tracking-server-id>.sagemaker.us-east-1.amazonaws.com \\
+      --mlflow-experiment-name my-experiment
 """
 
 import argparse
@@ -109,6 +116,22 @@ def parse_args() -> argparse.Namespace:
             "If omitted, the training script downloads data at runtime."
         ),
     )
+    # MLflow tracking
+    parser.add_argument(
+        "--mlflow-tracking-uri",
+        default=None,
+        dest="mlflow_tracking_uri",
+        help=(
+            "MLflow tracking server URI (e.g. the ARN or HTTPS URL of your "
+            "SageMaker MLflow Tracking Server). If omitted, MLflow logging is disabled."
+        ),
+    )
+    parser.add_argument(
+        "--mlflow-experiment-name",
+        default="generative-recommenders",
+        dest="mlflow_experiment_name",
+        help="MLflow experiment name.",
+    )
     # DLRM v3-specific flags
     parser.add_argument(
         "--dataset",
@@ -164,6 +187,12 @@ def main() -> None:
     logger.info(f"Output path   : {output_path}")
     logger.info(f"Hyperparams   : {hyperparameters}")
     logger.info(f"Data S3 URI   : {args.data_s3_uri or '(none — will download at runtime)'}")
+    logger.info(f"MLflow URI    : {args.mlflow_tracking_uri or '(disabled)'}")
+
+    environment = {"SAGEMAKER_PROGRAM": entry_point_script}
+    if args.mlflow_tracking_uri:
+        environment["MLFLOW_TRACKING_URI"] = args.mlflow_tracking_uri
+        environment["MLFLOW_EXPERIMENT_NAME"] = args.mlflow_experiment_name
 
     estimator = Estimator(
         image_uri=image_uri,
@@ -171,7 +200,7 @@ def main() -> None:
         instance_type=args.instance_type,
         instance_count=1,
         hyperparameters=hyperparameters,
-        environment={"SAGEMAKER_PROGRAM": entry_point_script},
+        environment=environment,
         output_path=output_path,
         region_name=args.region,
     )

@@ -18,12 +18,13 @@ RUN pip install --no-cache-dir \
 RUN pip install --no-cache-dir \
     gin-config \
     pandas \
-    tensorboard \
     pybind11 \
     click \
     matplotlib \
     absl-py \
-    sagemaker-training
+    sagemaker-training \
+    mlflow \
+    sagemaker-mlflow
 
 # Copy repo and compile CUDA extensions in place
 COPY . /opt/ml/code/

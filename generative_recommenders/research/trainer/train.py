@@ -16,6 +16,12 @@
 
 import logging
 import os
+
+try:
+    import mlflow
+    _MLFLOW_AVAILABLE = True
+except ImportError:
+    _MLFLOW_AVAILABLE = False
 import random
 import time
 from datetime import date
@@ -26,7 +32,6 @@ import torch
 import torch.distributed as dist
 from generative_recommenders.research.data.eval import (
     _avg,
-    add_to_summary_writer,
     eval_metrics_v2_from_tensors,
     get_eval_state,
 )
@@ -62,7 +67,6 @@ from generative_recommenders.research.modeling.similarity_utils import (
 )
 from generative_recommenders.research.trainer.data_loader import create_data_loader
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.tensorboard import SummaryWriter
 
 
 def setup(rank: int, world_size: int, master_port: int) -> None:
@@ -130,6 +134,34 @@ def train_fn(
     random_seed: int = 42,
 ) -> None:
     _BASE_OUT = os.environ.get("OUTPUT_DIR", ".")
+
+    # MLflow — only rank 0 logs; silently disabled if URI is not set or mlflow not installed.
+    _mlflow_uri = os.environ.get("MLFLOW_TRACKING_URI", "")
+    _mlflow_experiment = os.environ.get("MLFLOW_EXPERIMENT_NAME", "generative-recommenders")
+    _use_mlflow = _MLFLOW_AVAILABLE and bool(_mlflow_uri) and rank == 0
+
+    if _use_mlflow:
+        mlflow.set_tracking_uri(_mlflow_uri)
+        mlflow.set_experiment(_mlflow_experiment)
+        mlflow.start_run(run_name=f"{dataset_name}-{main_module}")
+        mlflow.log_params({
+            "dataset_name": dataset_name,
+            "max_sequence_length": max_sequence_length,
+            "local_batch_size": local_batch_size,
+            "learning_rate": learning_rate,
+            "num_epochs": num_epochs,
+            "num_warmup_steps": num_warmup_steps,
+            "weight_decay": weight_decay,
+            "dropout_rate": dropout_rate,
+            "main_module": main_module,
+            "loss_module": loss_module,
+            "num_negatives": num_negatives,
+            "sampling_strategy": sampling_strategy,
+            "temperature": temperature,
+            "item_embedding_dim": item_embedding_dim,
+            "enable_tf32": enable_tf32,
+        })
+        logging.info(f"MLflow run started: experiment={_mlflow_experiment}, uri={_mlflow_uri}")
 
     # to enable more deterministic results.
     random.seed(random_seed)
@@ -285,15 +317,7 @@ def train_fn(
     if positional_sampling_ratio is not None and positional_sampling_ratio < 1:
         model_desc += f"-d{positional_sampling_ratio}"
     # creates subfolders.
-    os.makedirs(f"{_BASE_OUT}/exps/{model_subfolder}", exist_ok=True)
     os.makedirs(f"{_BASE_OUT}/ckpts/{model_subfolder}", exist_ok=True)
-    log_dir = f"{_BASE_OUT}/exps/{model_desc}"
-    if rank == 0:
-        writer = SummaryWriter(log_dir=log_dir)
-        logging.info(f"Rank {rank}: writing logs to {log_dir}")
-    else:
-        writer = None
-        logging.info(f"Rank {rank}: disabling summary writer")
 
     last_training_time = time.time()
     torch.autograd.set_detect_anomaly(True)
@@ -337,9 +361,6 @@ def train_fn(
                     target_ratings=target_ratings,
                     user_max_batch_size=eval_user_max_batch_size,
                     dtype=torch.bfloat16 if main_module_bf16 else None,
-                )
-                add_to_summary_writer(
-                    writer, batch_id, eval_dict, prefix="eval", world_size=world_size
                 )
                 logging.info(
                     f"rank {rank}:  batch-stat (eval): iter {batch_id} (epoch {epoch}): "
@@ -397,9 +418,11 @@ def train_fn(
             loss = get_weighted_loss(loss, aux_losses, weights=loss_weights or {})
 
             if rank == 0:
-                assert writer is not None
-                writer.add_scalar("losses/ar_loss", loss, batch_id)
-                writer.add_scalar("losses/main_loss", main_loss, batch_id)
+                if _use_mlflow:
+                    mlflow.log_metrics({
+                        "losses/ar_loss": float(loss),
+                        "losses/main_loss": float(main_loss),
+                    }, step=batch_id)
 
             loss.backward()
 
@@ -419,9 +442,11 @@ def train_fn(
                 )
                 last_training_time = time.time()
                 if rank == 0:
-                    assert writer is not None
-                    writer.add_scalar("loss/train", loss, batch_id)
-                    writer.add_scalar("lr", lr, batch_id)
+                    if _use_mlflow:
+                        mlflow.log_metrics({
+                            "loss/train": float(loss),
+                            "lr": lr,
+                        }, step=batch_id)
 
             opt.step()
 
@@ -486,21 +511,15 @@ def train_fn(
         hr_50 = _avg(eval_dict_all["hr@50"], world_size=world_size)
         mrr = _avg(eval_dict_all["mrr"], world_size=world_size)
 
-        add_to_summary_writer(
-            writer,
-            batch_id=epoch,
-            metrics=eval_dict_all,
-            prefix="eval_epoch",
-            world_size=world_size,
-        )
-        if full_eval_every_n > 1 and is_full_eval(epoch):
-            add_to_summary_writer(
-                writer,
-                batch_id=epoch,
-                metrics=eval_dict_all,
-                prefix="eval_epoch_full",
-                world_size=world_size,
-            )
+        if _use_mlflow:
+            mlflow.log_metrics({
+                "eval/ndcg@10": ndcg_10,
+                "eval/ndcg@50": ndcg_50,
+                "eval/hr@10": hr_10,
+                "eval/hr@50": hr_50,
+                "eval/mrr": mrr,
+            }, step=epoch)
+
         if rank == 0 and epoch > 0 and (epoch % save_ckpt_every_n) == 0:
             torch.save(
                 {
@@ -518,17 +537,18 @@ def train_fn(
         last_training_time = time.time()
 
     if rank == 0:
-        if writer is not None:
-            writer.flush()
-            writer.close()
-
+        ckpt_path = f"{_BASE_OUT}/ckpts/{model_desc}_ep{epoch}"
         torch.save(
             {
                 "epoch": epoch,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": opt.state_dict(),
             },
-            f"{_BASE_OUT}/ckpts/{model_desc}_ep{epoch}",
+            ckpt_path,
         )
+
+        if _use_mlflow:
+            mlflow.log_artifact(ckpt_path, artifact_path="checkpoints")
+            mlflow.end_run()
 
     cleanup()
