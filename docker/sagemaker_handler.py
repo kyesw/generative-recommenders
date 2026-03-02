@@ -58,8 +58,11 @@ def ping():
 async def invocations(request: Request):
     content_type = request.headers.get("content-type", "application/json")
     accept = request.headers.get("accept", "application/json")
+    # Normalize wildcard accept to application/json
+    if accept == "*/*" or not accept:
+        accept = "application/json"
     body = (await request.body()).decode("utf-8")
     data = _handler.input_fn(body, content_type)
     prediction = _handler.predict_fn(data, _model)
     result = _handler.output_fn(prediction, accept)
-    return Response(content=result, media_type=accept)
+    return Response(content=result, media_type="application/json")

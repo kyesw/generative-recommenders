@@ -374,38 +374,58 @@ def predict_fn(data: dict, model_ctx: dict) -> dict:
     # -------------------------------------------------------------------
     t_model = time.perf_counter()
     with torch.no_grad():
+        t_embed = time.perf_counter()
         past_embeddings = model.get_item_embeddings(seq_features.past_ids)
+        embedding_latency_ms = (time.perf_counter() - t_embed) * 1000
+        
+        t_encode = time.perf_counter()
         query_embedding = model.encode(
             past_lengths=seq_features.past_lengths,
             past_ids=seq_features.past_ids,
             past_embeddings=past_embeddings,
             past_payloads=seq_features.past_payloads,
         )  # (1, D)
+        encode_latency_ms = (time.perf_counter() - t_encode) * 1000
     model_latency_ms = (time.perf_counter() - t_model) * 1000
 
     # -------------------------------------------------------------------
     # 4. Top-K retrieval via dot product with pre-computed item embeddings
     # -------------------------------------------------------------------
     t_topk = time.perf_counter()
+    
+    t_similarity = time.perf_counter()
     scores = torch.matmul(query_embedding, item_embeddings.T)  # (1, N)
+    similarity_latency_ms = (time.perf_counter() - t_similarity) * 1000
 
     # Mask out items the user has already interacted with.
+    t_filter = time.perf_counter()
     seen_set = set(item_ids_trunc)
     for item_id in seen_set:
         idx = item_id - 1  # item IDs are 1-indexed; embeddings are 0-indexed
         if 0 <= idx < scores.shape[1]:
             scores[0, idx] = float("-inf")
+    filter_latency_ms = (time.perf_counter() - t_filter) * 1000
 
+    t_topk_select = time.perf_counter()
     _, top_k_indices = torch.topk(scores[0], k=min(top_k, scores.shape[1]))
     top_k_item_ids = (top_k_indices + 1).cpu().tolist()  # back to 1-indexed IDs
+    topk_select_latency_ms = (time.perf_counter() - t_topk_select) * 1000
+    
     topk_latency_ms = (time.perf_counter() - t_topk) * 1000
 
     _emit_emf({
         "TotalLatencyMs":        (round((time.perf_counter() - t_start) * 1000, 2), "Milliseconds"),
         "FeatureStoreLatencyMs": (round(fs_latency_ms, 2),                         "Milliseconds"),
         "ModelEncodeLatencyMs":  (round(model_latency_ms, 2),                      "Milliseconds"),
+        "EmbeddingLookupLatencyMs": (round(embedding_latency_ms, 2),               "Milliseconds"),
+        "SequenceEncodeLatencyMs": (round(encode_latency_ms, 2),                   "Milliseconds"),
         "TopKLatencyMs":         (round(topk_latency_ms, 2),                       "Milliseconds"),
+        "SimilarityComputeLatencyMs": (round(similarity_latency_ms, 2),            "Milliseconds"),
+        "FilterLatencyMs":       (round(filter_latency_ms, 2),                     "Milliseconds"),
+        "TopKSelectLatencyMs":   (round(topk_select_latency_ms, 2),                "Milliseconds"),
         "CacheHit":              (int(cache_hit),                                   "Count"),
+        "SequenceLength":        (seq_len,                                          "Count"),
+        "TopK":                  (top_k,                                            "Count"),
     })
 
     return {"user_id": user_id, "item_ids": top_k_item_ids}

@@ -11,6 +11,7 @@ case "$1" in
             --port 8080 \
             --workers 1 \
             --log-level info \
+            --no-access-log \
             --app-dir /opt/program \
             sagemaker_handler:app
         ;;

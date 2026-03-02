@@ -171,7 +171,11 @@ def train_fn(
             "l2_norm_eps": l2_norm_eps,
             "gr_output_length": gr_output_length,
         })
+        mlflow.enable_system_metrics_logging()
         logging.info(f"MLflow run started: experiment={_mlflow_experiment}, uri={_mlflow_uri}")
+
+    # Start training timer
+    training_start_time = time.time()
 
     # to enable more deterministic results.
     random.seed(random_seed)
@@ -605,6 +609,12 @@ def train_fn(
         )
 
         if _use_mlflow:
+            total_training_time = time.time() - training_start_time
+            mlflow.log_metrics({
+                "training/total_duration_seconds": total_training_time,
+                "training/total_duration_minutes": total_training_time / 60,
+                "training/total_duration_hours": total_training_time / 3600,
+            })
             mlflow.log_artifact(ckpt_path, artifact_path="checkpoints")
             # Log the operative gin config at the END of training — at this point
             # all bindings (train_fn.*, hstu_encoder.*, etc.) have been accessed
