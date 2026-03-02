@@ -143,6 +143,7 @@ def train_fn(
     if _use_mlflow:
         mlflow.set_tracking_uri(_mlflow_uri)
         mlflow.set_experiment(_mlflow_experiment)
+        mlflow.enable_system_metrics_logging()
         mlflow.start_run(run_name=f"{dataset_name}-{main_module}")
         mlflow.set_tags({
             "sagemaker.training_job_name": os.environ.get("TRAINING_JOB_NAME", "local"),
@@ -171,7 +172,6 @@ def train_fn(
             "l2_norm_eps": l2_norm_eps,
             "gr_output_length": gr_output_length,
         })
-        mlflow.enable_system_metrics_logging()
         logging.info(f"MLflow run started: experiment={_mlflow_experiment}, uri={_mlflow_uri}")
 
     # Start training timer

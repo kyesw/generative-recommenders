@@ -106,6 +106,20 @@ def parse_args() -> argparse.Namespace:
         dest="master_port",
         help="(research) DDP master port.",
     )
+    parser.add_argument(
+        "--learning-rate",
+        default=None,
+        type=float,
+        dest="learning_rate",
+        help="(research) Override learning rate from gin config.",
+    )
+    parser.add_argument(
+        "--num-epochs",
+        default=None,
+        type=int,
+        dest="num_epochs",
+        help="(research) Override number of epochs from gin config.",
+    )
     # Data channel
     parser.add_argument(
         "--data-s3-uri",
@@ -175,6 +189,10 @@ def main() -> None:
             "dataset_name": args.dataset_name,
             "master_port": args.master_port,
         }
+        if args.learning_rate is not None:
+            hyperparameters["learning_rate"] = args.learning_rate
+        if args.num_epochs is not None:
+            hyperparameters["num_epochs"] = args.num_epochs
     else:
         entry_point_script = "train_dlrm_v3.py"
         hyperparameters = {

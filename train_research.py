@@ -11,6 +11,7 @@ Supported hyperparameters:
   
   Tunable hyperparameters (override gin config):
   learning_rate    : learning rate (float)
+  num_epochs       : number of training epochs (int)
   local_batch_size : batch size (int)
   dropout_rate     : dropout rate (float)
   num_negatives    : number of negative samples (int)
@@ -113,6 +114,7 @@ if __name__ == "__main__":
     # -----------------------------------------------------------------------
     tunable_params = {
         "learning_rate": ("train_fn.learning_rate", float),
+        "num_epochs": ("train_fn.num_epochs", int),
         "local_batch_size": ("train_fn.local_batch_size", int),
         "dropout_rate": ("train_fn.dropout_rate", float),
         "num_negatives": ("train_fn.num_negatives", int),

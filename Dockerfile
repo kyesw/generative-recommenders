@@ -88,7 +88,8 @@ RUN pip install --no-cache-dir \
 # ---------------------------------------------------------------------------
 RUN pip install --no-cache-dir \
         "mlflow>=2.11.0" \
-        sagemaker-mlflow
+        sagemaker-mlflow \
+        psutil
 
 # ---------------------------------------------------------------------------
 # Application Python dependencies
