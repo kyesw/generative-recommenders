@@ -112,7 +112,21 @@ def _create_feature_group(
         event_time_feature_name="event_time",
         role_arn=role,
         enable_online_store=True,
+        # online_store_config={
+        #    "StorageType": "InMemoryStorage"  # Redis
+        # },
+        # VPC Endpoint for SageMaker Feature Store — com.amazonaws.<region>.sagemaker.featurestore-runtime must exist in
+        #   the VPC, otherwise the endpoint container can't reach Feature Store even within the VPC
+        # online_store_config={
+        #     "SecurityConfig": {
+        #         "VpcConfig": {
+        #             "SubnetIds": ["subnet-xxxxxxxx"],
+        #             "SecurityGroupIds": ["sg-xxxxxxxx"],
+        #         }
+        #     }
+        # },
     )
+    
     logger.info(f"Creating feature group '{name}' — waiting for it to become active...")
     _wait_until_created(fg)
     logger.info(f"Feature group '{name}' is ready.")

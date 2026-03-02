@@ -110,6 +110,7 @@ def main() -> None:
 
     import sagemaker
     from sagemaker.model import Model
+    from sagemaker.network import NetworkConfig 
 
     boto_session = boto3.Session(region_name=args.region)
     sm_session = sagemaker.Session(boto_session=boto_session)
@@ -140,6 +141,11 @@ def main() -> None:
     logger.info(f"Instance type : {args.instance_type}")
     logger.info(f"Environment   : {env}")
 
+    # network_config = NetworkConfig(
+    #     subnets=["subnet-xxxxxxxx"],
+    #     security_group_ids=["sg-xxxxxxxx"],
+    # )
+    
     # model_data is None — the container downloads weights from MLflow directly.
     model = Model(
         image_uri=image_uri,
@@ -155,6 +161,7 @@ def main() -> None:
         endpoint_name=endpoint_name,
         container_startup_health_check_timeout=600,  # 10 minutes for model loading
         wait=True,
+        # network_config=network_config,
     )
 
     logger.info(f"\nEndpoint '{endpoint_name}' is live.")

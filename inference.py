@@ -211,7 +211,28 @@ def model_fn(model_dir: str) -> dict:
     logger.info(f"Item embeddings pre-computed: shape={tuple(item_embeddings.shape)}, device={device}")
 
     # -----------------------------------------------------------------------
-    # 7. Initialise Feature Store client with cache
+    # 7. Warmup — compile CUDA kernels before first real request.
+    # Runs a dummy forward pass with the exact tensor shapes used at inference
+    # so all CUDA kernels are compiled and cached during container startup,
+    # not on the first real request.
+    # -----------------------------------------------------------------------
+    logger.info("Running warmup forward pass to compile CUDA kernels...")
+    total_len = max_sequence_length + gr_output_length
+    with torch.no_grad():
+        dummy_ids = torch.zeros((1, total_len), dtype=torch.long, device=device)
+        dummy_lengths = torch.tensor([max_sequence_length], dtype=torch.long, device=device)
+        dummy_timestamps = torch.zeros((1, total_len), dtype=torch.long, device=device)
+        dummy_embeddings = model.get_item_embeddings(dummy_ids)
+        model.encode(
+            past_lengths=dummy_lengths,
+            past_ids=dummy_ids,
+            past_embeddings=dummy_embeddings,
+            past_payloads={"timestamps": dummy_timestamps},
+        )
+    logger.info("Warmup complete — CUDA kernels compiled and cached")
+
+    # -----------------------------------------------------------------------
+    # 8. Initialise Feature Store client with cache
     # -----------------------------------------------------------------------
     import boto3
     featurestore_client = boto3.client(
