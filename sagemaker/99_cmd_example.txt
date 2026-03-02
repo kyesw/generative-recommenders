@@ -1,0 +1,31 @@
+python sagemaker/prepare_data.py sample \
+      --bucket <bucket-name> \
+      --dataset-name ml-1m
+
+
+python sagemaker/feature_store_setup.py \
+      --bucket <bucket-name> \
+      --role <role-arn> \
+      --dataset-name ml-1m \
+      --region ap-northeast-2
+
+python sagemaker/ingest_features.py \
+      --bucket <bucket-name> \
+      --dataset-name ml-1m \
+      --region ap-northeast-2
+
+python sagemaker/launch_training.py \
+      --pipeline research \
+      --role <role-arn> \
+      --bucket <bucket-name> \
+      --mlflow-tracking-uri <mlflow-uri> \
+      --mlflow-experiment-name <mlflow-expermient> \
+      --data-s3-uri s3://<bucket-name>/generative-recommenders/data/ml-1m/ \
+      --region ap-northeast-2
+
+python sagemaker/deploy_endpoint.py \
+      --role <role-arn> \
+      --region ap-northeast-2 \
+      --mlflow-tracking-uri <mlflow-uri> \
+      --mlflow-run-id <mlflow-run-id>
+      --instance-type ml.g4dn.xlarge
