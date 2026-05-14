@@ -217,7 +217,7 @@ def model_fn(model_dir: str) -> dict:
     # not on the first real request.
     # -----------------------------------------------------------------------
     logger.info("Running warmup forward pass to compile CUDA kernels...")
-    total_len = max_sequence_length + gr_output_length
+    total_len = max_sequence_length + gr_output_length + 1
     with torch.no_grad():
         dummy_ids = torch.zeros((1, total_len), dtype=torch.long, device=device)
         dummy_lengths = torch.tensor([max_sequence_length], dtype=torch.long, device=device)
