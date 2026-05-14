@@ -1,31 +1,65 @@
-python sagemaker/prepare_data.py sample \
+# 00. Prepare data
+python sagemaker/00_prepare_data.py sample \
       --bucket <bucket-name> \
       --dataset-name ml-1m
 
-
-python sagemaker/feature_store_setup.py \
+# 01. Feature Store setup
+python sagemaker/01_feature_store_setup.py \
       --bucket <bucket-name> \
       --role <role-arn> \
       --dataset-name ml-1m \
       --region ap-northeast-2
 
-python sagemaker/ingest_features.py \
+# 02. Ingest features
+python sagemaker/02_ingest_features.py \
       --bucket <bucket-name> \
       --dataset-name ml-1m \
       --region ap-northeast-2
 
-python sagemaker/launch_training.py \
+# 04. Launch training
+python sagemaker/04_launch_training.py \
       --pipeline research \
       --role <role-arn> \
       --bucket <bucket-name> \
       --mlflow-tracking-uri <mlflow-uri> \
-      --mlflow-experiment-name <mlflow-expermient> \
+      --mlflow-experiment-name <mlflow-experiment> \
       --data-s3-uri s3://<bucket-name>/generative-recommenders/data/ml-1m/ \
       --region ap-northeast-2
 
-python sagemaker/deploy_endpoint.py \
+# 05. Deploy endpoint
+python sagemaker/05_deploy_endpoint.py \
       --role <role-arn> \
       --region ap-northeast-2 \
       --mlflow-tracking-uri <mlflow-uri> \
-      --mlflow-run-id <mlflow-run-id>
+      --mlflow-run-id <mlflow-run-id> \
       --instance-type ml.g4dn.xlarge
+
+# 06. Autoscaling
+python sagemaker/06_autoscaling.py \
+      ...
+
+# 07. Batch inference (one-shot Batch Transform)
+python sagemaker/07_batch_inference.py \
+      --role <role-arn> \
+      --bucket <bucket-name> \
+      --region ap-northeast-2 \
+      --mlflow-tracking-uri <mlflow-uri> \
+      --mlflow-run-id <mlflow-run-id>
+
+# 08. Batch pipeline (Preprocess → BatchTransform → Postprocess)
+#     With specific model:
+python sagemaker/08_batch_pipeline.py \
+      --role <role-arn> \
+      --bucket <bucket-name> \
+      --region ap-northeast-2 \
+      --mlflow-tracking-uri <mlflow-uri> \
+      --mlflow-run-id <mlflow-run-id>
+
+#     With latest model + parallel processing:
+python sagemaker/08_batch_pipeline.py \
+      --role <role-arn> \
+      --bucket <bucket-name> \
+      --region ap-northeast-2 \
+      --mlflow-tracking-uri <mlflow-uri> \
+      --mlflow-experiment-name <mlflow-experiment> \
+      --transform-instance-count 2
