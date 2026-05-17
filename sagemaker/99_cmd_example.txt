@@ -63,3 +63,9 @@ python sagemaker/08_batch_pipeline.py \
       --mlflow-tracking-uri <mlflow-uri> \
       --mlflow-experiment-name <mlflow-experiment> \
       --transform-instance-count 2
+
+python sagemaker/09_schedule_pipeline.py enable \
+      --pipeline-name gr-batch-inference \
+      --role arn:aws:iam::ACCOUNT:role/SageMakerRole \
+      --schedule "cron(0 3 * * ? *)" \
+      --region ap-northeast-2
