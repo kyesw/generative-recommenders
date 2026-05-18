@@ -185,6 +185,7 @@ def main() -> None:
     import sagemaker
     import sagemaker.sklearn
     from sagemaker.model import Model
+    from sagemaker.network import NetworkConfig
     from sagemaker.processing import FrameworkProcessor, ProcessingInput, ProcessingOutput
     from sagemaker.transformer import Transformer
     from sagemaker.workflow.execution_variables import ExecutionVariables
@@ -198,6 +199,12 @@ def main() -> None:
     boto_session = boto3.Session(region_name=args.region)
     sm_session = sagemaker.Session(boto_session=boto_session)
     pipeline_session = PipelineSession(boto_session=boto_session)
+
+    # --- VPC configuration (uncomment to run inside a VPC) ---------------
+    # network_config = NetworkConfig(
+    #     subnets=["subnet-xxxxxxxx"],
+    #     security_group_ids=["sg-xxxxxxxx"],
+    # )
 
     # --- Resolve model ---------------------------------------------------
     if not args.mlflow_run_id:
@@ -242,6 +249,7 @@ def main() -> None:
         instance_count=1,
         role=args.role,
         sagemaker_session=pipeline_session,
+        # network_config=network_config,
     )
 
     step_preprocess = ProcessingStep(
@@ -284,6 +292,10 @@ def main() -> None:
             "FEATURE_STORE_REGION": args.region,
         },
         sagemaker_session=sm_session,
+        # vpc_config={
+        #     "Subnets": ["subnet-xxxxxxxx"],
+        #     "SecurityGroupIds": ["sg-xxxxxxxx"],
+        # },
     ).create(instance_type=args.transform_instance_type)
     logger.info(f"Model created: {model_name}")
 
